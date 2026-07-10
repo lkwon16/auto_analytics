@@ -36,6 +36,31 @@ CREATE TABLE IF NOT EXISTS disclosures (
     rcept_dt    DATE
 );
 
+CREATE TABLE IF NOT EXISTS analysis_universe (
+    corp_code     VARCHAR(8) PRIMARY KEY,
+    corp_name     VARCHAR(200) NOT NULL,
+    stock_code    VARCHAR(6),
+    industry_code VARCHAR(10),
+    n_years       INT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ratios (
+    corp_code               VARCHAR(8) NOT NULL,
+    bsns_year               INT NOT NULL,
+    receivables_turnover    NUMERIC,
+    inventory_turnover      NUMERIC,
+    gp_margin               NUMERIC,
+    operating_margin        NUMERIC,
+    sga_ratio               NUMERIC,
+    debt_ratio              NUMERIC,
+    interest_coverage       NUMERIC,
+    total_accruals_ratio    NUMERIC,
+    oi_cfo_gap_ratio        NUMERIC,
+    revenue_growth          NUMERIC,
+    n_ratios_computed       INT NOT NULL,
+    PRIMARY KEY (corp_code, bsns_year)
+);
+
 CREATE INDEX IF NOT EXISTS idx_fs_corp_year ON financial_statements (corp_code, bsns_year);
 CREATE INDEX IF NOT EXISTS idx_disc_corp ON disclosures (corp_code, rcept_dt);
 """
