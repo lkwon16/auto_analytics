@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS corp_master (
     corp_code   VARCHAR(8) PRIMARY KEY,
     corp_name   VARCHAR(200) NOT NULL,
     stock_code  VARCHAR(6),
-    industry_code VARCHAR(10)
+    industry_code VARCHAR(10),
+    acc_mt      VARCHAR(2)
 );
 
 CREATE TABLE IF NOT EXISTS financial_statements (
