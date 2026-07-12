@@ -3,3 +3,4 @@ pandas
 sqlalchemy
 python-dotenv
 tqdm
+streamlit

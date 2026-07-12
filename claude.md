@@ -108,10 +108,24 @@ audit_ap.db              # SQLite DB (생성됨)
     (`LIMITATIONS.md` §12 상세).
   - MVP 목표("성능 낮아도 측정 체계 완성")대로 STEP 4 완료 처리, 추가 튜닝 없이 진행.
 
+- STEP 5(`dashboard.py`) 완료: Streamlit 2개 화면.
+  - (1) 기업 조회: 회사명 검색 → 선택 → 10개 비율 각각 연도별 자사 값 vs peer 중위수
+    라인 차트 (`peer_group.get_peer_group()` 재사용).
+  - (2) 플래그 목록: `flags.is_flagged=1` 898건을 종합 스코어 순으로 표시(상위 N건
+    슬라이더), 각 건 펼치면 상위 3개 기여 비율+편차+방향, 최신 공시 rcept_no 기반
+    DART 공시 링크.
+  - 실행 확인: `py -m streamlit run dashboard.py`로 기동 후 핵심 조회 로직(load_universe,
+    load_ratios, get_peer_group, load_flags, load_latest_disclosures)을 실제 DB에
+    직접 호출해 정상 동작 검증함(2026-07-12).
+  - `requirements.txt`에 `streamlit` 추가.
+
 ## 7. 다음 작업
 
-1. STEP 5: Streamlit 대시보드 2개 화면 — (1) 기업 조회(비율 추이+peer 중위수 라인),
-   (2) 플래그 목록(스코어 상위+편차 3개+DART 링크). CLAUDE.md §5 참고.
+MVP 플로우(STEP 1~5) 전부 완료. 이후는 CLAUDE.md §5 "v2 업그레이드 경로" 참고
+(우선순위: ⑤ 텍스트 신호 모듈 → 평가 프레임 이원화 → 회귀 기대모형+동적 임계값 →
+OFS fallback·분기 데이터 → isolation forest+SHAP → LLM 리포트 서술). 그 전에
+`LIMITATIONS.md` §5(기재정정 라벨 정제)·§11(실무용 당기값 입력 경로)이 v2 착수 시
+우선 검토 대상.
 
 ## 8. 문서 산출물 (노션에 정리되어 있음)
 

@@ -53,6 +53,9 @@ py detect_flags.py
 
 # 9) 미니 백테스트 → backtest_labels (Precision@10% + lift)
 py backtest.py
+
+# 10) 대시보드 실행 (기업 조회 + 플래그 목록)
+py -m streamlit run dashboard.py
 ```
 
 각 스크립트는 재실행 안전(idempotent)합니다 — 중단되거나 다시 실행해도 이미 수집된
@@ -72,10 +75,11 @@ py backtest.py
 | `flags` | 9,038개(기업×연도) | 종합 스코어 계산 가능 8,974건(99.3%), 상위 10% 플래그 898건 |
 | `backtest_labels` | 9,038개(기업×연도) | Precision@10% 18.37%, Lift 0.91배 — 원인은 `LIMITATIONS.md` §12 |
 
-진행 단계는 STEP 1(분석 모집단)·STEP 2(비율 엔진)·STEP 3(기대치·편차 탐지)·STEP 4
-(미니 백테스트)까지 완료, STEP 5(Streamlit 대시보드) 착수 전입니다. 세부 계획은
-`CLAUDE.md` §5 MVP 플로우 참고. STEP 3~4에서 발견된 이슈(비율 극단값, 실무 배포 시
-당기값 입력 구조, 백테스트 Lift가 낮은 근본 원인 등)는 `LIMITATIONS.md` §9~12 참고.
+진행 단계는 STEP 1~5(분석 모집단·비율 엔진·기대치 편차 탐지·미니 백테스트·Streamlit
+대시보드) 전부 완료되어 MVP 플로우가 일단락됐습니다. 세부 계획은 `CLAUDE.md` §5 MVP
+플로우 참고. STEP 3~4에서 발견된 이슈(비율 극단값, 실무 배포 시 당기값 입력 구조,
+백테스트 Lift가 낮은 근본 원인 등)는 `LIMITATIONS.md` §9~12 참고 — 대시보드 결과를
+해석하기 전에 반드시 함께 읽을 것.
 
 ## 참고
 
