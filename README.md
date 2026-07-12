@@ -50,6 +50,9 @@ py compute_ratios.py
 
 # 8) 기대치·편차 탐지 → flags (peer 중위수+자사 전년도 가중 결합, 상위 10% 플래그)
 py detect_flags.py
+
+# 9) 미니 백테스트 → backtest_labels (Precision@10% + lift)
+py backtest.py
 ```
 
 각 스크립트는 재실행 안전(idempotent)합니다 — 중단되거나 다시 실행해도 이미 수집된
@@ -67,11 +70,12 @@ py detect_flags.py
 | `analysis_universe` | 1,905개 기업 | 금융업·비12월결산·CFS 3개년 미만 제외 |
 | `ratios` | 9,038개(기업×연도) | 10개 비율 중 9개가 매핑 커버리지 85% 이상 |
 | `flags` | 9,038개(기업×연도) | 종합 스코어 계산 가능 8,974건(99.3%), 상위 10% 플래그 898건 |
+| `backtest_labels` | 9,038개(기업×연도) | Precision@10% 18.37%, Lift 0.91배 — 원인은 `LIMITATIONS.md` §12 |
 
-진행 단계는 STEP 1(분석 모집단)·STEP 2(비율 엔진)·STEP 3(기대치·편차 탐지)까지 완료,
-STEP 4(미니 백테스트) 착수 전입니다. 세부 계획은 `CLAUDE.md` §5 MVP 플로우 참고.
-STEP 3에서 발견된 이슈(비율 극단값, 실무 배포 시 당기값 입력 구조 등)는
-`LIMITATIONS.md` §9~11 참고.
+진행 단계는 STEP 1(분석 모집단)·STEP 2(비율 엔진)·STEP 3(기대치·편차 탐지)·STEP 4
+(미니 백테스트)까지 완료, STEP 5(Streamlit 대시보드) 착수 전입니다. 세부 계획은
+`CLAUDE.md` §5 MVP 플로우 참고. STEP 3~4에서 발견된 이슈(비율 극단값, 실무 배포 시
+당기값 입력 구조, 백테스트 Lift가 낮은 근본 원인 등)는 `LIMITATIONS.md` §9~12 참고.
 
 ## 참고
 
