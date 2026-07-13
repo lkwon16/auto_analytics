@@ -14,6 +14,10 @@ from sqlalchemy import create_engine, text
 
 from config import DB_URL
 from peer_group import get_peer_group
+from match_signals import get_candidate_signals
+from collect_news import collect_news_for_company
+
+PBLNTF_TY_LABELS = {"B": "주요사항보고", "F": "외부감사관련", "I": "거래소공시"}
 
 RATIO_LABELS = {
     "receivables_turnover": "매출채권회전율",
@@ -140,10 +144,12 @@ def render_flag_list(engine, universe: pd.DataFrame):
 
     for row in shown.itertuples():
         with st.expander(f"{row.corp_name} ({row.bsns_year}) — 종합 스코어 {row.composite_score:.2f}"):
+            top_ratios = []
             for i in (1, 2, 3):
                 ratio_col = getattr(row, f"top{i}_ratio")
                 if not ratio_col:
                     continue
+                top_ratios.append(ratio_col)
                 deviation = getattr(row, f"top{i}_deviation")
                 direction = getattr(row, f"top{i}_direction")
                 label = RATIO_LABELS.get(ratio_col, ratio_col)
@@ -152,6 +158,39 @@ def render_flag_list(engine, universe: pd.DataFrame):
             rcept_no = latest_disclosures.get(row.corp_code)
             if rcept_no:
                 st.markdown(f"[DART 공시 보기]({DART_VIEWER_URL.format(rcept_no=rcept_no)})")
+
+            render_candidate_signals(engine, row.corp_code, row.corp_name, int(row.bsns_year), top_ratios)
+
+
+def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: int, top_ratios: list[str]):
+    """모듈⑤ — 편차 원인 후보(수시공시·뉴스)를 회계연도 윈도우 기준으로 보여준다.
+    시점 매칭 설계는 match_signals.py 상단 주석(LIMITATIONS.md §8) 참고."""
+    st.markdown("**편차 원인 후보 (모듈⑤)**")
+    st.caption("회계연도 1/1~12/31(concurrent) + 익년 1/1~4/30(post_year) 윈도우 내 후보. "
+               "★관련 = 편차 상위 비율과 카테고리가 매칭됨(규칙 기반, LIMITATIONS.md §13 참고).")
+
+    result = get_candidate_signals(corp_code, bsns_year, engine, top_ratios)
+    events = result["events"]
+    news = result["news"]
+
+    if events.empty:
+        st.write("수시공시 후보 없음 (또는 collect_disclosure_events.py 미실행)")
+    else:
+        for r in events.itertuples():
+            tag = " ⭐관련" if r.relevant else ""
+            ty_label = PBLNTF_TY_LABELS.get(r.pblntf_ty, r.pblntf_ty)
+            st.write(f"- {r.rcept_dt} [{r.window}/{ty_label}] {r.report_nm} ({r.categories}){tag}")
+
+    if news.empty:
+        st.caption(f"뉴스 후보 없음 — 이 기업 뉴스는 아직 미수집일 수 있습니다 "
+                   "(네이버 뉴스 API는 날짜 범위 필터가 없어 오래된 기사는 누락될 수 있음, LIMITATIONS.md §14).")
+        if st.button(f"{corp_name} 뉴스 조회하기", key=f"news_{corp_code}_{bsns_year}"):
+            n = collect_news_for_company(corp_code, corp_name, engine)
+            st.success(f"신규 뉴스 {n}건 수집 완료. 다시 펼쳐서 확인하세요.")
+            st.rerun()
+    else:
+        for r in news.itertuples():
+            st.write(f"- {r.pub_date} [{r.window}] [{r.title}]({r.link})")
 
 
 def main():

@@ -16,11 +16,16 @@
 pip install -r requirements.txt
 ```
 
-`.env` 파일을 프로젝트 루트에 직접 만들고 아래 두 줄을 채웁니다 (git에 올리지 말 것):
+`.env` 파일을 프로젝트 루트에 직접 만들고 아래 내용을 채웁니다 (git에 올리지 말 것):
 
 ```
 DART_API_KEY=발급받은_OpenDART_API_키
 DB_URL=sqlite:///audit_ap.db
+
+# 모듈⑤ 뉴스 신호(collect_news.py)에만 필요. 없어도 나머지는 전부 동작함.
+# 발급: https://developers.naver.com/apps/#/register (검색 API 체크)
+NAVER_CLIENT_ID=
+NAVER_CLIENT_SECRET=
 ```
 
 ## 실행 순서 (전체 파이프라인)
@@ -54,9 +59,27 @@ py detect_flags.py
 # 9) 미니 백테스트 → backtest_labels (Precision@10% + lift)
 py backtest.py
 
-# 10) 대시보드 실행 (기업 조회 + 플래그 목록)
+# 10) 대시보드 실행 (기업 조회 + 플래그 목록 + 편차 원인 후보)
 py -m streamlit run dashboard.py
+
+# --- 여기부터 모듈⑤(뉴스·공시 텍스트 신호), v2 착수 항목 ---
+
+# 11) 수시공시 수집 (주요사항보고·외부감사관련·거래소공시) → disclosure_events
+#     시장 전체를 6개년치 스캔하므로 시간이 걸림. 재실행 안전.
+py collect_disclosure_events.py
+
+# 12) 뉴스 신호 수집 (모듈⑤ 소스 2, 온디맨드 — 특정 기업 1개씩 조회)
+#     analysis_universe 전체를 배치 수집하지 않음(LIMITATIONS.md §14 참고)
+py collect_news.py "기업명" [corp_code]
+
+# 13) 편차 원인 후보 매칭 데모 (11·12 없이도 disclosure_events만으로 동작)
+py match_signals.py                        # flags 상위 1건을 예시로 사용
+py match_signals.py <corp_code> <bsns_year>  # 특정 기업·연도 지정
 ```
+
+대시보드(10번)의 "플래그 목록" 탭에서 각 항목을 펼치면 12·13이 자동으로 통합되어
+"편차 원인 후보 (모듈⑤)" 섹션에 표시된다. 뉴스가 미수집 상태면 그 자리에서
+"뉴스 조회하기" 버튼으로 바로 수집할 수 있다.
 
 각 스크립트는 재실행 안전(idempotent)합니다 — 중단되거나 다시 실행해도 이미 수집된
 데이터는 건너뛰고 이어서 진행합니다. `peer_group.py`는 별도 실행용이 아니라
@@ -74,6 +97,8 @@ py -m streamlit run dashboard.py
 | `ratios` | 9,038개(기업×연도) | 10개 비율 중 9개가 매핑 커버리지 85% 이상 |
 | `flags` | 9,038개(기업×연도) | 종합 스코어 계산 가능 8,974건(99.3%), 상위 10% 플래그 898건 |
 | `backtest_labels` | 9,038개(기업×연도) | Precision@10% 18.37%, Lift 0.91배 — 원인은 `LIMITATIONS.md` §12 |
+| `disclosure_events` | 수집 중(미완료) | 모듈⑤ 소스 1. 2021~2025년치는 완료, 2026년 일부 남음(재실행하면 이어서 진행) |
+| `news_signals` | 온디맨드 | 모듈⑤ 소스 2. 배치 수집 없음 — 조회한 기업만 누적됨(`LIMITATIONS.md` §14) |
 
 진행 단계는 STEP 1~5(분석 모집단·비율 엔진·기대치 편차 탐지·미니 백테스트·Streamlit
 대시보드) 전부 완료되어 MVP 플로우가 일단락됐습니다. 세부 계획은 `CLAUDE.md` §5 MVP

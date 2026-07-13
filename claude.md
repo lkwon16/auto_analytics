@@ -121,11 +121,57 @@ audit_ap.db              # SQLite DB (생성됨)
 
 ## 7. 다음 작업
 
-MVP 플로우(STEP 1~5) 전부 완료. 이후는 CLAUDE.md §5 "v2 업그레이드 경로" 참고
-(우선순위: ⑤ 텍스트 신호 모듈 → 평가 프레임 이원화 → 회귀 기대모형+동적 임계값 →
-OFS fallback·분기 데이터 → isolation forest+SHAP → LLM 리포트 서술). 그 전에
-`LIMITATIONS.md` §5(기재정정 라벨 정제)·§11(실무용 당기값 입력 경로)이 v2 착수 시
-우선 검토 대상.
+MVP 플로우(STEP 1~5) 전부 완료. v2 우선순위 1번인 ⑤ 텍스트 신호 모듈 착수함
+(아래 6-1 참고). 나머지는 CLAUDE.md §5 "v2 업그레이드 경로" 참고 (평가 프레임
+이원화 → 회귀 기대모형+동적 임계값 → OFS fallback·분기 데이터 →
+isolation forest+SHAP → LLM 리포트 서술). `LIMITATIONS.md` §5(기재정정 라벨
+정제)·§11(실무용 당기값 입력 경로)도 여전히 미착수.
+
+## 6-1. 모듈⑤ 텍스트 신호 모듈 진행 현황 (2026-07-13 착수)
+
+MVP에서 제외됐던 모듈⑤(뉴스·공시 텍스트 신호)를 v2 첫 항목으로 구현 시작.
+LIMITATIONS.md §8(연간 데이터 vs 시점 매칭 해상도 불일치)을 "편차 시점 ±N개월"이
+아니라 **회계연도 자체를 매칭 윈도우로 잡는 방식**으로 재설계해 해소함
+(`match_signals.py`의 `_window()`: concurrent=회계연도 1/1~12/31,
+post_year=익년 1/1~4/30).
+
+- **`event_categories.py`**: report_nm 키워드 규칙으로 수시공시를 7개 카테고리(자금조달·
+  소송·영업정지_제재·M&A_구조조정·감사관련·지배구조변경·부실징후)로 분류하고,
+  10개 재무비율 각각을 관련 카테고리에 매핑(`RATIO_TO_CATEGORIES`). LLM 미사용,
+  전부 규칙 기반(CLAUDE.md §1 원칙 준수).
+- **`collect_disclosure_events.py`** (모듈⑤ 소스 1): DART 수시공시(B=주요사항보고,
+  F=외부감사관련, I=거래소공시) 수집 → `disclosure_events` 테이블.
+  `collect_disclosures.py`와 동일한 분기 단위 시장 전체 스캔 구조.
+  **재실행 중 네트워크 타임아웃으로 2회 죽음** → `_get_with_retry()`(최대 5회,
+  지수 백오프)를 추가해 견고화. 2026-07-13 기준 2021~2025년치는 완료, 2026년
+  일부 남은 상태(재실행하면 이어서 진행됨, 아직 마무리 실행 안 함).
+- **`collect_news.py`** (모듈⑤ 소스 2): 네이버 뉴스 검색 API. 다른 `collect_*.py`와
+  달리 **전체 모집단을 배치 수집하지 않고 기업 단위 온디맨드**로 설계함 — 일 25,000건
+  API 한도 + 날짜범위 필터 미지원(`LIMITATIONS.md` §14)이라 배치가 비현실적이고,
+  실제 사용 시나리오(감사인이 플래그된 기업을 개별 조회)에도 더 부합.
+- **`match_signals.py`**: `get_candidate_signals(corp_code, bsns_year, engine, top_ratios)`
+  — 회계연도 윈도우 내 수시공시·뉴스를 조회하고, 편차 top1~3 비율과 카테고리가
+  겹치는 수시공시에 `relevant=True` 태그. CLI로 `py match_signals.py <corp_code>
+  <bsns_year>` 실행 가능.
+- **`dashboard.py` 통합**: "플래그 목록" 탭의 각 항목 펼침(expander) 안에
+  `render_candidate_signals()`로 편차 원인 후보를 바로 보여줌. 뉴스 미수집 상태면
+  그 자리에서 "뉴스 조회하기" 버튼으로 `collect_news_for_company()`를 온디맨드 호출.
+- **검증(2026-07-13)**: 한양이엔지(00216762) 2022년(정상 범위 플래그, 종합
+  스코어 9.73 — 이노스페이스 같은 §10 극단값 케이스 아님)을 예시로 매칭 확인.
+  `interest_coverage` 등 편차에 "자기주식취득신탁계약체결결정"(반복 연장)·
+  "감사보고서제출"이 ★관련으로 정확히 매칭됨. 대시보드 초기 로드가 실행하는
+  것과 동일하게 상위 플래그 50건 전체에 대해 `get_candidate_signals`를 직접
+  호출해 오류 0건 확인(브라우저 자동화 도구가 환경에 없어 실제 화면 스크린샷
+  검증은 못 함 — 사용자가 `py -m streamlit run dashboard.py`로 직접 확인 필요).
+  - 버그 2건 발견·수정: (1) SQLite에서 읽은 날짜 컬럼이 문자열로 반환되는데
+    `datetime.date`와 비교하다 죽는 버그(`match_signals.py`), (2) Windows 콘솔
+    (cp949)이 이모지·특수문자(⚠️, —, ★) 출력 시 죽는 버그 — 관련 스크립트
+    전체(`collect_disclosure_events.py`, `collect_news.py`, `match_signals.py`,
+    `collect_disclosures.py`)에 `sys.stdout.reconfigure(encoding="utf-8",
+    errors="replace")` 추가.
+- **남은 일**: `collect_disclosure_events.py` 2026년치 마저 수집, Notion MCP
+  연동(진행 중 — 사용자 세션 재시작 후 `/mcp` OAuth 인증 필요), 카테고리 규칙
+  정밀도 개선(`LIMITATIONS.md` §13).
 
 ## 8. 문서 산출물 (노션에 정리되어 있음)
 

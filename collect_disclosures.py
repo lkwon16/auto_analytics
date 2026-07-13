@@ -8,15 +8,19 @@ API: list (공시검색)
  
 실행: python collect_disclosures.py
 """
+import sys
 import time
 from datetime import date
- 
+
 import pandas as pd
 import requests
 from sqlalchemy import create_engine, text
- 
+
 from config import DART_API_KEY, DB_URL, BASE_URL
- 
+
+# Windows 콘솔(cp949)에서 이모지(⚠️ 등) 출력 시 UnicodeEncodeError로 죽는 것을 방지
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # 분기별 (시작월일, 종료월일) — 3개월 제한 준수
 QUARTERS = [("0101", "0331"), ("0401", "0630"), ("0701", "0930"), ("1001", "1231")]
  
