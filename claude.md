@@ -169,9 +169,23 @@ post_year=익년 1/1~4/30).
     전체(`collect_disclosure_events.py`, `collect_news.py`, `match_signals.py`,
     `collect_disclosures.py`)에 `sys.stdout.reconfigure(encoding="utf-8",
     errors="replace")` 추가.
-- **남은 일**: `collect_disclosure_events.py` 2026년치 마저 수집, Notion MCP
-  연동(진행 중 — 사용자 세션 재시작 후 `/mcp` OAuth 인증 필요), 카테고리 규칙
-  정밀도 개선(`LIMITATIONS.md` §13).
+- **`disclosure_events` 2026년치 수집 완료** (2026-07-13 착수 → 2026-07-15/16
+  두 세션에 걸쳐 완료, 최종 2026-07-16). 원본 `collect_disclosure_events.py`가 매
+  실행마다 2021년부터 전체 재스캔하는 비효율(연도/분기를 건너뛰지 않고 `rcept_no`
+  중복 필터에만 의존)이 있어, 2026년 구간만 도는 임시 스크립트
+  `collect_disclosure_events_2026only.py`를 만들어 실행(같은 `fetch_events`/
+  `categorize` 재사용, idempotent라 여러 세션에 걸쳐 나눠 돌려도 안전했음).
+  최종 결과: `disclosure_events` 246,305 → **288,150**건, 최신 `rcept_dt`
+  2026-07-16(오늘). 2026 Q1~Q3 18개 조합(3분기×3유형×2시장) 전부 완료, Q4는
+  아직 미도래라 자동 스킵됨. 작업 완료 후 임시 스크립트는 삭제함 — 다음에 2026
+  Q4치(10월 이후)나 2027년치를 수집하려면 원본 `collect_disclosure_events.py`의
+  "매번 2021년부터 전체 재스캔" 구조를 먼저 고쳐야 함(연도/분기 자체를 건너뛰는
+  방식으로), 그렇지 않으면 같은 비효율이 재발함.
+- Notion MCP 연동 완료 확인(워크스페이스에 "📊 분석적 절차 자동화 프로젝트" 메인
+  페이지 + 모듈 ①~⑦ 개별 페이지 존재, `notion-search`로 조회 성공).
+- **남은 일**: 카테고리 규칙 정밀도 개선(`LIMITATIONS.md` §13), 신규 적재된 2026년
+  수시공시 데이터로 `match_signals.py` 매칭 재검증(선택), 원본
+  `collect_disclosure_events.py`의 재스캔 비효율 구조 개선(위 참고).
 
 ## 8. 문서 산출물 (노션에 정리되어 있음)
 

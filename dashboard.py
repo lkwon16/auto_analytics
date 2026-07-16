@@ -135,10 +135,26 @@ def render_flag_list(engine, universe: pd.DataFrame):
         st.info("플래그된 기업이 없습니다.")
         return
 
-    st.write(f"총 {len(flags):,}건 (종합 스코어 상위 10% 기준). 스코어 극단값 해석은 "
-             "`LIMITATIONS.md` §10 참고.")
-    n_show = st.slider("표시할 상위 건수", 10, len(flags), min(50, len(flags)))
-    shown = flags.head(n_show)
+    st.caption(f"전체 플래그 {len(flags):,}건 (종합 스코어 상위 10% 기준) 중 회사명으로 검색. "
+               "스코어 극단값 해석은 `LIMITATIONS.md` §10 참고.")
+    name_query = st.text_input("회사명 검색", "", key="flag_name_query")
+
+    if not name_query:
+        st.info("회사명을 검색하면 해당 기업의 플래그만 표시됩니다.")
+        return
+
+    shown = flags[flags["corp_name"].str.contains(name_query, case=False, na=False)]
+    if shown.empty:
+        in_universe = universe["corp_name"].str.contains(name_query, case=False, na=False).any()
+        if in_universe:
+            st.info(f"'{name_query}'은(는) 분석 모집단에 있으나, 현재 편차 임계값(상위 10%) "
+                    "플래그 대상은 아닙니다.")
+        else:
+            st.info(f"'{name_query}' 검색 결과가 없습니다 (분석 모집단에 없는 기업일 수 있습니다).")
+        return
+
+    st.write(f"'{name_query}' 검색 결과 {len(shown):,}건")
+    shown = shown.sort_values("composite_score", ascending=False)
 
     latest_disclosures = load_latest_disclosures(engine, tuple(shown["corp_code"].unique()))
 

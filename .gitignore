@@ -1,5 +1,7 @@
 .env
 audit_ap.db
+audit_ap.db.bak_*
+*.log
 __pycache__/
 *.pyc
 .claude/settings.local.json
