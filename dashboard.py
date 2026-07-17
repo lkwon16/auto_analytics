@@ -211,7 +211,7 @@ def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: 
 
 def main():
     st.set_page_config(page_title="분석적 절차 자동화", layout="wide")
-    st.title("동종업계 벤치마킹 기반 분석적 절차 자동화")
+    st.title("AUTO 분석적 절차")
     st.caption("ISA 520 기반 MVP — 결과 해석 전 LIMITATIONS.md를 함께 확인하세요.")
 
     engine = get_engine()
