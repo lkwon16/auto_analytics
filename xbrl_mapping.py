@@ -31,12 +31,15 @@ ACCOUNT_CANDIDATES = {
         ("IS", "ifrs-full_ProfitLoss"),
         ("CIS", "ifrs-full_ProfitLoss"),
     ],
+    # 순수 매출채권(협의) 태그를 최우선으로 한다. ifrs-full_TradeAndOtherCurrentReceivables는
+    # 매출채권+기타채권(미수금 등)을 합친 광의 개념이라 receivables_turnover의 peer 비교가능성을
+    # 해친다 — LIMITATIONS.md §15 참고(동시 공시 396개사 비교 시 중위수 84% 차이 실측).
     "trade_receivables": [
-        ("BS", "ifrs-full_TradeAndOtherCurrentReceivables"),
         ("BS", "dart_ShortTermTradeReceivable"),
         ("BS", "ifrs-full_CurrentTradeReceivables"),
         ("BS", "ifrs-full_TradeReceivables"),
         ("BS", "ifrs-full_TradeAndOtherReceivables"),
+        ("BS", "ifrs-full_TradeAndOtherCurrentReceivables"),
     ],
     "inventory": [
         ("BS", "ifrs-full_Inventories"),
