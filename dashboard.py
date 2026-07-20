@@ -16,6 +16,7 @@ from config import DB_URL
 from peer_group import get_peer_group
 from match_signals import get_candidate_signals
 from collect_news import collect_news_for_company
+from growth_screener import compute_revenue_growth
 
 PBLNTF_TY_LABELS = {"B": "주요사항보고", "F": "외부감사관련", "I": "거래소공시"}
 
@@ -178,6 +179,65 @@ def render_flag_list(engine, universe: pd.DataFrame):
             render_candidate_signals(engine, row.corp_code, row.corp_name, int(row.bsns_year), top_ratios)
 
 
+@st.cache_data
+def load_growth(_engine) -> pd.DataFrame:
+    return compute_revenue_growth(_engine)
+
+
+def render_growth_screener(engine):
+    """매출 성장 스크리너 (신규 비즈니스 라인, growth_screener.py 참고).
+    감사 모집단(analysis_universe) 제한 없이 상장사 전체를 대상으로 한다."""
+    st.caption("감사 모집단 제한 없이 상장사 전체를 대상으로 매출 성장 기업을 찾습니다. "
+               "같은 DB를 재사용하는 별도 스크리닝 기능입니다(growth_screener.py).")
+
+    df_all = load_growth(engine)
+    if df_all.empty:
+        st.info("매출 데이터가 없습니다.")
+        return
+
+    years = sorted(df_all["bsns_year"].unique(), reverse=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        year = st.selectbox("기준 연도", years)
+    with col2:
+        section_options = ["전체"] + sorted(
+            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
+        )
+        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options)
+
+    col3, col4 = st.columns(2)
+    with col3:
+        min_growth = st.slider("최소 매출 증가율(%)", -50, 500, 20, step=5)
+    with col4:
+        show_extreme = st.checkbox(
+            "극단값(전기매출 왜소화 의심) 포함", value=False,
+            help="전기 매출이 0에 가까운 초기 기업은 증가율이 비현실적으로(1000%대) 폭발할 수 있습니다.",
+        )
+
+    shown = df_all[df_all["bsns_year"] == year].copy()
+    if section_choice != "전체":
+        shown = shown[shown["section_name"] == section_choice]
+    if not show_extreme:
+        shown = shown[~shown["is_extreme"]]
+    shown = shown[shown["growth"] >= min_growth / 100]
+    shown = shown.sort_values("growth", ascending=False)
+
+    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, "
+             f"증가율 {min_growth}% 이상{'' if show_extreme else ' (극단값 제외)'}")
+
+    if shown.empty:
+        st.info("조건에 맞는 기업이 없습니다. 조건을 완화해 보세요.")
+        return
+
+    display = shown[["corp_name", "section_name", "revenue", "prev_revenue", "growth", "is_extreme"]].copy()
+    display["revenue"] = display["revenue"].map(lambda v: f"{v:,.0f}")
+    display["prev_revenue"] = display["prev_revenue"].map(lambda v: f"{v:,.0f}")
+    display["growth"] = (shown["growth"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
+    display["is_extreme"] = display["is_extreme"].map({True: "⚠️", False: ""})
+    display.columns = ["기업명", "업종", "당기매출", "전기매출", "증가율", "극단값"]
+    st.dataframe(display, width="stretch", hide_index=True)
+
+
 def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: int, top_ratios: list[str]):
     """모듈⑤ — 편차 원인 후보(수시공시·뉴스)를 회계연도 윈도우 기준으로 보여준다.
     시점 매칭 설계는 match_signals.py 상단 주석(LIMITATIONS.md §8) 참고."""
@@ -217,11 +277,13 @@ def main():
     engine = get_engine()
     universe = load_universe(engine)
 
-    tab1, tab2 = st.tabs(["기업 조회", "플래그 목록"])
+    tab1, tab2, tab3 = st.tabs(["기업 조회", "플래그 목록", "성장 기업 스크리닝"])
     with tab1:
         render_company_view(engine, universe)
     with tab2:
         render_flag_list(engine, universe)
+    with tab3:
+        render_growth_screener(engine)
 
 
 if __name__ == "__main__":
