@@ -5,16 +5,26 @@
 LIMITATIONS.md §5). "감사보고서" 단독 정정 공시는 데이터에 존재하지 않음(확인 완료) —
 사업보고서 정정이 감사 관련 정정의 사실상 유일한 창구.
 
-라벨 = "N년 플래그 → N+1년(캘린더 연도)에 그 기업의 사업보고서 정정이 실제 접수됐는가"
-(LIMITATIONS.md §6 정정 후 데이터 순환 문제를 "플래그 다음 해 정정 발생 여부"로 우회)
+`correction_details.is_financial_related`(`collect_correction_reasons.py`가 정정 원문의
+CORRECTION 섹션을 파싱해 판정, LIMITATIONS.md §5)로 재무제표·감사의견에 실질적 영향을
+주는 정정만 라벨에 반영한다 — report_nm 패턴만으로는 오타·경미한 서식 정정과 구분이
+안 되던 문제를 해소.
+
+라벨 = "N년 플래그 → N+1년(캘린더 연도)에 그 기업의 재무 관련 사업보고서 정정이 실제
+접수됐는가" (LIMITATIONS.md §6 정정 후 데이터 순환 문제를 "플래그 다음 해 정정 발생
+여부"로 우회)
 평가 = flags.is_flagged=1 그룹의 Precision@10% 대 전체 기준율 대비 lift
 
 실행: python backtest.py
 """
+import sys
+
 import pandas as pd
 from sqlalchemy import create_engine, text
 
 from config import DB_URL
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # 사업보고서 정정만 포함, "사업보고서제출기한연장신고서"(내용 정정 아님) 제외
 RESTATEMENT_PATTERN = "[기재정정]사업보고서%"
@@ -40,8 +50,10 @@ def main():
         flags = pd.read_sql(text("SELECT corp_code, bsns_year, is_flagged FROM flags"), conn)
         restatements = pd.read_sql(
             text(
-                "SELECT corp_code, rcept_dt FROM disclosures "
-                "WHERE report_nm LIKE :p AND report_nm NOT LIKE :e"
+                "SELECT d.corp_code, d.rcept_dt FROM disclosures d "
+                "JOIN correction_details c ON c.rcept_no = d.rcept_no "
+                "WHERE d.report_nm LIKE :p AND d.report_nm NOT LIKE :e "
+                "AND c.is_financial_related = 1"
             ),
             conn, params={"p": RESTATEMENT_PATTERN, "e": EXCLUDE_PATTERN},
         )

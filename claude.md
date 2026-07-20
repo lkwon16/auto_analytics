@@ -107,6 +107,11 @@ audit_ap.db              # SQLite DB (생성됨)
     raw 당기 데이터로 분석하면(§11) 다를 수 있으나 검증 불가능한 가설로 남김
     (`LIMITATIONS.md` §12 상세).
   - MVP 목표("성능 낮아도 측정 체계 완성")대로 STEP 4 완료 처리, 추가 튜닝 없이 진행.
+  - **후속 개선 (v2 진행 중 반영)**: 2026-07-19 `trade_receivables` XBRL 매핑 수정으로
+    Lift 0.91배→1.02배, 2026-07-20 `correction_details.is_financial_related` 기반
+    재무 관련 정정만 라벨로 쓰도록 정제(`LIMITATIONS.md` §5)해 Lift **1.02배→1.09배**,
+    기준율 20.49%→10.02%로 개선(상세 `LIMITATIONS.md` §12). 여전히 "무작위보다 유의미"
+    하다고 보기엔 부족한 수준 — §6 look-ahead 구조적 한계가 근본 원인이라는 결론은 유효.
 
 - STEP 5(`dashboard.py`) 완료: Streamlit 2개 화면.
   - (1) 기업 조회: 회사명 검색 → 선택 → 10개 비율 각각 연도별 자사 값 vs peer 중위수
@@ -124,8 +129,8 @@ audit_ap.db              # SQLite DB (생성됨)
 MVP 플로우(STEP 1~5) 전부 완료. v2 우선순위 1번인 ⑤ 텍스트 신호 모듈 착수함
 (아래 6-1 참고). 나머지는 CLAUDE.md §5 "v2 업그레이드 경로" 참고 (평가 프레임
 이원화 → 회귀 기대모형+동적 임계값 → OFS fallback·분기 데이터 →
-isolation forest+SHAP → LLM 리포트 서술). `LIMITATIONS.md` §5(기재정정 라벨
-정제)·§11(실무용 당기값 입력 경로)도 여전히 미착수.
+isolation forest+SHAP → LLM 리포트 서술). `LIMITATIONS.md` §5(기재정정 라벨 정제)는
+2026-07-20 완료됨(§6-2 참고). §11(실무용 당기값 입력 경로)은 여전히 미착수.
 
 ## 6-1. 모듈⑤ 텍스트 신호 모듈 진행 현황 (2026-07-13 착수)
 
@@ -186,6 +191,29 @@ post_year=익년 1/1~4/30).
 - **남은 일**: 카테고리 규칙 정밀도 개선(`LIMITATIONS.md` §13), 신규 적재된 2026년
   수시공시 데이터로 `match_signals.py` 매칭 재검증(선택), 원본
   `collect_disclosure_events.py`의 재스캔 비효율 구조 개선(위 참고).
+
+## 6-2. 백테스트 라벨·매핑 품질 개선 (2026-07-19 ~ 2026-07-20)
+
+STEP 4 백테스트 Lift 0.91배(§6, 무작위 이하)의 원인을 두 가지 데이터 품질 문제로
+좁혀 순차 개선함:
+
+- **2026-07-19**: `xbrl_mapping.py`의 `ACCOUNT_CANDIDATES` 11개 필드 실측 감사 →
+  `trade_receivables`가 `ifrs-full_TradeAndOtherCurrentReceivables`(광의)와
+  `dart_ShortTermTradeReceivable`(협의)을 동의어로 취급해 peer 비교가능성을 훼손하던
+  문제 발견(동시 공시 396개사 중위수 84% 차이). 협의 태그 우선순위로 수정 →
+  `compute_ratios.py`/`detect_flags.py`/`backtest.py` 재실행, Lift 0.91배→1.02배.
+  (`LIMITATIONS.md` §15)
+- **2026-07-20**: `LIMITATIONS.md` §5(기재정정 라벨 노이즈)의 데이터 수집은
+  2026-07-13 세션에 이미 끝나 있었으나(`correction_details` 4,053건, 재무 관련
+  1,968건), `backtest.py`가 이를 쓰지 않고 여전히 report_nm 패턴만으로 라벨링하던
+  미완료 항목을 마무리. `backtest.py`가 `correction_details.is_financial_related=1`
+  (오타·서식 정정 등 비재무 정정 제외)만 라벨로 쓰도록 수정 → 기준율 20.49%→10.02%,
+  Lift 1.02배→**1.09배**. (`LIMITATIONS.md` §5, §12)
+- **결론**: 라벨·매핑 품질 개선으로 얻을 수 있는 향상분은 이번 두 조치로 대체로
+  소진된 것으로 판단. Lift가 여전히 1.1배 근처에 머무는 것은 §6의 look-ahead
+  구조적 한계(DART 확정 데이터는 이미 정정 반영됨) 때문이라는 결론이 강화됨 —
+  추가 라벨 튜닝보다 §11(실무용 당기값 입력 override 경로) 등 v2 항목으로 넘어가는
+  것이 합리적.
 
 ## 8. 문서 산출물 (노션에 정리되어 있음)
 
