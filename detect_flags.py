@@ -79,6 +79,43 @@ def compute_expectation(own_prior, peer_median):
     return None
 
 
+def deviation_for_value(actual, own_prior, peer_values: list[float]) -> dict | None:
+    """비율 하나의 (실제값, 자사 전년도, peer 값 목록) -> {"deviation", "direction"}.
+    기대치·편차 산식은 모듈 상단 docstring 참고. 계산 불가하면 None.
+    배치 백테스트(compute_row_deviations)와 실무 당기값 입력(live_override.py)이
+    동일한 산식을 쓰도록 공유하는 핵심 함수."""
+    if actual is None or pd.isna(actual):
+        return None
+    if own_prior is not None and pd.isna(own_prior):
+        own_prior = None
+
+    peer_values = [float(v) for v in peer_values if v is not None and not pd.isna(v)]
+    peer_median = quantile(peer_values, 0.5) if len(peer_values) >= MIN_PEER_VALUES else None
+    peer_iqr = None
+    if len(peer_values) >= MIN_PEER_VALUES:
+        q75, q25 = quantile(peer_values, 0.75), quantile(peer_values, 0.25)
+        peer_iqr = q75 - q25
+
+    expectation = compute_expectation(own_prior, peer_median)
+    if expectation is None or peer_iqr is None or peer_iqr == 0:
+        return None
+
+    deviation = (float(actual) - expectation) / peer_iqr
+    direction = "증가" if actual >= expectation else "감소"
+    return {"deviation": deviation, "direction": direction}
+
+
+def rank_top_contributors(devs: dict, top_n: int = TOP_N_CONTRIBUTORS) -> tuple[float | None, list[tuple[str, dict]]]:
+    """비율별 편차 dict -> (종합 스코어, 상위 N개 (ratio, {deviation, direction}) 리스트).
+    devs가 비어있으면 (None, [])."""
+    if not devs:
+        return None, []
+    ranked = sorted(devs.items(), key=lambda kv: abs(kv[1]["deviation"]), reverse=True)
+    top = ranked[:top_n]
+    composite_score = sum(abs(v["deviation"]) for _, v in top) / len(top)
+    return composite_score, top
+
+
 def compute_row_deviations(lookup: dict, corp_code: str, year: int, peers: list[str]) -> dict:
     """비율별 {"deviation": ..., "direction": ...} 딕셔너리. 계산 불가한 비율은 제외."""
     cur = lookup.get((corp_code, year), {})
@@ -87,32 +124,12 @@ def compute_row_deviations(lookup: dict, corp_code: str, year: int, peers: list[
     result = {}
     for ratio in RATIO_COLS:
         actual = cur.get(ratio)
-        if actual is None or pd.isna(actual):
-            continue
-
         own_prior = prior.get(ratio)
-        if own_prior is not None and pd.isna(own_prior):
-            own_prior = None
+        peer_values = [lookup.get((p, year), {}).get(ratio) for p in peers]
 
-        peer_values = []
-        for p in peers:
-            v = lookup.get((p, year), {}).get(ratio)
-            if v is not None and not pd.isna(v):
-                peer_values.append(float(v))
-
-        peer_median = quantile(peer_values, 0.5) if len(peer_values) >= MIN_PEER_VALUES else None
-        peer_iqr = None
-        if len(peer_values) >= MIN_PEER_VALUES:
-            q75, q25 = quantile(peer_values, 0.75), quantile(peer_values, 0.25)
-            peer_iqr = q75 - q25
-
-        expectation = compute_expectation(own_prior, peer_median)
-        if expectation is None or peer_iqr is None or peer_iqr == 0:
-            continue
-
-        deviation = (float(actual) - expectation) / peer_iqr
-        direction = "증가" if actual >= expectation else "감소"
-        result[ratio] = {"deviation": deviation, "direction": direction}
+        dev = deviation_for_value(actual, own_prior, peer_values)
+        if dev is not None:
+            result[ratio] = dev
 
     return result
 
@@ -148,10 +165,9 @@ def main():
             rec[f"top{i}_deviation"] = None
             rec[f"top{i}_direction"] = None
 
-        if devs:
-            ranked = sorted(devs.items(), key=lambda kv: abs(kv[1]["deviation"]), reverse=True)
-            top = ranked[:TOP_N_CONTRIBUTORS]
-            rec["composite_score"] = sum(abs(v["deviation"]) for _, v in top) / len(top)
+        composite_score, top = rank_top_contributors(devs)
+        if top:
+            rec["composite_score"] = composite_score
             for i, (ratio, v) in enumerate(top, start=1):
                 rec[f"top{i}_ratio"] = ratio
                 rec[f"top{i}_deviation"] = v["deviation"]

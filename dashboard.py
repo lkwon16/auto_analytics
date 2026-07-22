@@ -21,6 +21,8 @@ from turnaround_screener import compute_turnaround
 from leverage_screener import compute_debt_ratio_change
 from cash_quality_screener import compute_cash_quality
 from screening_common import fetch_listed_corps, with_section
+from live_override import ACCOUNT_FIELDS, ACCOUNT_LABELS, compute_live_deviations
+from detect_flags import rank_top_contributors
 
 PBLNTF_TY_LABELS = {"B": "주요사항보고", "F": "외부감사관련", "I": "거래소공시"}
 
@@ -331,6 +333,66 @@ def render_unified_screener(engine):
     st.dataframe(display, width="stretch", hide_index=True)
 
 
+def render_live_override(engine, universe: pd.DataFrame):
+    """실무용 당기(미확정) 실제값 입력 화면 (LIMITATIONS.md §11).
+    peer·자사 전년도는 기존과 동일하게 DART 확정 데이터를 쓰고, 감사 중인 "당기"
+    값만 회계사가 원본 계정값을 직접 입력해 편차를 계산한다."""
+    st.caption("피감사회사의 아직 DART에 공시되지 않은 당기(미확정) 원본 재무자료를 "
+               "직접 입력해 편차를 계산합니다. peer 그룹·자사 전년도는 기존 DART 확정 "
+               "데이터를 그대로 사용합니다. 상세는 `LIMITATIONS.md` §11 참고.")
+
+    name_query = st.text_input("회사명 검색", "", key="live_name_query")
+    matched = (
+        universe[universe["corp_name"].str.contains(name_query, case=False, na=False)]
+        if name_query else universe
+    )
+    if matched.empty:
+        st.info("검색 결과가 없습니다.")
+        return
+
+    options = {f"{r.corp_name} ({r.corp_code})": r.corp_code for r in matched.itertuples()}
+    selected_label = st.selectbox("기업 선택", list(options.keys()), key="live_corp_select")
+    corp_code = options[selected_label]
+
+    own_ratios = load_ratios(engine, (corp_code,))
+    default_year = int(own_ratios["bsns_year"].max()) + 1 if not own_ratios.empty else 2026
+    bsns_year = st.number_input("당기 회계연도", min_value=2000, max_value=2100, value=default_year, step=1)
+
+    if int(bsns_year) - 1 not in own_ratios["bsns_year"].tolist():
+        st.warning(f"자사의 {int(bsns_year) - 1}년 확정 데이터가 없어 자사 전년도 기대치를 "
+                   "사용할 수 없습니다(peer 기대치만으로 계산됩니다).")
+
+    st.markdown("**당기 원본 계정값 입력 (원 단위)**")
+    c1, c2 = st.columns(2)
+    live_accounts = {}
+    for i, field in enumerate(ACCOUNT_FIELDS):
+        col = c1 if i % 2 == 0 else c2
+        with col:
+            v = st.number_input(ACCOUNT_LABELS.get(field, field), value=None, step=1_000_000,
+                                 key=f"live_acc_{field}")
+        if v is not None:
+            live_accounts[field] = v
+
+    if st.button("편차 계산", key="live_compute"):
+        if not live_accounts:
+            st.warning("최소 1개 이상 계정값을 입력하세요.")
+            return
+        devs = compute_live_deviations(corp_code, int(bsns_year), live_accounts, engine)
+        if not devs:
+            st.info("편차를 계산할 수 있는 비율이 없습니다 (입력값 부족, peer 표본 부족, "
+                     "또는 §9 극단값 배제 기준 초과).")
+            return
+        composite_score, top = rank_top_contributors(devs)
+        st.write(f"**종합 스코어: {composite_score:.2f}** (상위 {len(top)}개 비율 |편차| 평균)")
+        for i, (ratio, v) in enumerate(top, start=1):
+            label = RATIO_LABELS.get(ratio, ratio)
+            st.write(f"{i}. **{label}** — 편차 {v['deviation']:.2f} ({v['direction']})")
+        with st.expander("전체 비율 편차 보기"):
+            for ratio, v in sorted(devs.items(), key=lambda kv: abs(kv[1]["deviation"]), reverse=True):
+                label = RATIO_LABELS.get(ratio, ratio)
+                st.write(f"- {label}: 편차 {v['deviation']:.2f} ({v['direction']})")
+
+
 def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: int, top_ratios: list[str]):
     """모듈⑤ — 편차 원인 후보(수시공시·뉴스)를 회계연도 윈도우 기준으로 보여준다.
     시점 매칭 설계는 match_signals.py 상단 주석(LIMITATIONS.md §8) 참고."""
@@ -371,13 +433,15 @@ def main():
     engine = get_engine()
     universe = load_universe(engine)
 
-    tab1, tab2, tab3 = st.tabs(["기업 조회", "플래그 목록", "기업 스크리닝"])
+    tab1, tab2, tab3, tab4 = st.tabs(["기업 조회", "플래그 목록", "기업 스크리닝", "당기값 입력(실무용)"])
     with tab1:
         render_company_view(engine, universe)
     with tab2:
         render_flag_list(engine, universe)
     with tab3:
         render_unified_screener(engine)
+    with tab4:
+        render_live_override(engine, universe)
 
 
 if __name__ == "__main__":
