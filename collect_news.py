@@ -77,7 +77,7 @@ def fetch_news(query: str, max_results: int = 100) -> pd.DataFrame:
     return df[["title", "description", "link", "pub_date"]]
 
 
-def collect_news_for_company(corp_code: str, corp_name: str, engine=None, max_results: int = 100) -> int:
+def collect_news_for_company(corp_code: str, corp_name: str, engine=None, max_results: int = 50) -> int:
     """특정 기업의 뉴스를 조회해 news_signals에 적재(중복 링크는 스킵). 신규 적재 건수 반환."""
     engine = engine or create_engine(DB_URL)
     with engine.begin() as conn:

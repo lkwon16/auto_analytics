@@ -25,7 +25,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from config import DB_URL
-from event_categories import RATIO_TO_CATEGORIES
+from event_categories import RATIO_TO_CATEGORIES, categorize
 
 # Windows 콘솔(cp949)에서 특수문자(—, ★ 등) 출력 시 UnicodeEncodeError로 죽는 것을 방지
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -50,9 +50,9 @@ def get_candidate_signals(
     corp_code: str, bsns_year: int, engine=None, top_ratios: list[str] | None = None
 ) -> dict:
     """반환: {"events": DataFrame, "news": DataFrame}
-    각 DataFrame에는 window(concurrent/post_year) 컬럼이 붙는다. events에는 추가로
-    top_ratios와 카테고리가 겹치는지를 나타내는 relevant 컬럼이 붙고, 그 기준으로
-    정렬된다(관련 후보가 위로)."""
+    각 DataFrame에는 window(concurrent/post_year) 컬럼과, top_ratios와 카테고리가
+    겹치는지를 나타내는 relevant 컬럼이 붙고, 그 기준으로 정렬된다(관련 후보가 위로).
+    events는 report_nm, news는 title+description에 키워드 카테고리 규칙을 적용한다."""
     engine = engine or create_engine(DB_URL)
     c_start, c_end, p_start, p_end = _window(bsns_year)
     relevant_cats = _relevant_categories(top_ratios or [])
@@ -87,6 +87,12 @@ def get_candidate_signals(
     if not news.empty:
         news["pub_date"] = pd.to_datetime(news["pub_date"]).dt.date
         news["window"] = news["pub_date"].apply(lambda d: "concurrent" if c_start <= d <= c_end else "post_year")
+        # 뉴스 제목+본문에 공시와 동일한 키워드 카테고리 규칙(event_categories)을 적용.
+        # report_nm(정형화된 공시명)과 달리 뉴스는 자유 문장이라 오탐 가능성이 더 높음
+        # (LIMITATIONS.md §14 참고).
+        news_categories = (news["title"] + " " + news["description"]).apply(categorize)
+        news["relevant"] = news_categories.apply(lambda cs: any(c in relevant_cats for c in cs))
+        news = news.sort_values(["relevant", "pub_date"], ascending=[False, True])
 
     return {"events": events, "news": news}
 
@@ -153,7 +159,8 @@ def main():
     print(f"\n[뉴스 후보] {len(news)}건")
     if not news.empty:
         for r in news.itertuples():
-            print(f"  {r.pub_date} [{r.window}] {r.title}")
+            tag = " ★관련" if r.relevant else ""
+            print(f"  {r.pub_date} [{r.window}] {r.title}{tag}")
     else:
         print(f"  (없음 — 이 기업 뉴스는 아직 미수집. 예시: "
               f'py collect_news.py "{row.corp_name}" {row.corp_code})')

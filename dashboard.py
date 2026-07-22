@@ -16,7 +16,7 @@ from config import DB_URL
 from peer_group import get_peer_group
 from match_signals import get_candidate_signals
 from collect_news import collect_news_for_company
-from growth_screener import compute_revenue_growth
+from growth_screener import compute_revenue_growth, REVENUE_SCALE_BANDS
 
 PBLNTF_TY_LABELS = {"B": "주요사항보고", "F": "외부감사관련", "I": "거래소공시"}
 
@@ -214,27 +214,58 @@ def render_growth_screener(engine):
             help="전기 매출이 0에 가까운 초기 기업은 증가율이 비현실적으로(1000%대) 폭발할 수 있습니다.",
         )
 
+    col5, col6 = st.columns(2)
+    with col5:
+        band_options = ["전체"] + [label for label, _, _ in REVENUE_SCALE_BANDS]
+        band_choice = st.selectbox("매출 규모", band_options)
+    with col6:
+        min_streak = st.slider(
+            "최소 연속 성장 개년수", 0, 5, 0,
+            help="당해년도까지 매출 증가율이 몇 개년 연속 양수(+)였는지.",
+        )
+
+    margin_improved_only = st.checkbox("영업이익률 전년대비 개선 기업만", value=False)
+
     shown = df_all[df_all["bsns_year"] == year].copy()
     if section_choice != "전체":
         shown = shown[shown["section_name"] == section_choice]
     if not show_extreme:
         shown = shown[~shown["is_extreme"]]
     shown = shown[shown["growth"] >= min_growth / 100]
+    if band_choice != "전체":
+        _, lo, hi = next(b for b in REVENUE_SCALE_BANDS if b[0] == band_choice)
+        shown = shown[(shown["revenue"] >= lo) & (shown["revenue"] < hi)]
+    if min_streak > 0:
+        shown = shown[shown["consecutive_growth_years"] >= min_streak]
+    if margin_improved_only:
+        shown = shown[shown["margin_improved"] == True]  # noqa: E712 (NA와 구분 위해 == True 유지)
     shown = shown.sort_values("growth", ascending=False)
 
-    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, "
-             f"증가율 {min_growth}% 이상{'' if show_extreme else ' (극단값 제외)'}")
+    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 매출 규모: {band_choice}, "
+             f"증가율 {min_growth}% 이상{'' if show_extreme else ' (극단값 제외)'}"
+             f"{f', 연속 성장 {min_streak}년 이상' if min_streak > 0 else ''}"
+             f"{', 영업이익률 개선' if margin_improved_only else ''}")
 
     if shown.empty:
         st.info("조건에 맞는 기업이 없습니다. 조건을 완화해 보세요.")
         return
 
-    display = shown[["corp_name", "section_name", "revenue", "prev_revenue", "growth", "is_extreme"]].copy()
+    display = shown[[
+        "corp_name", "section_name", "revenue", "prev_revenue", "growth", "is_extreme",
+        "consecutive_growth_years", "operating_margin", "margin_improved",
+    ]].copy()
     display["revenue"] = display["revenue"].map(lambda v: f"{v:,.0f}")
     display["prev_revenue"] = display["prev_revenue"].map(lambda v: f"{v:,.0f}")
     display["growth"] = (shown["growth"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
     display["is_extreme"] = display["is_extreme"].map({True: "⚠️", False: ""})
-    display.columns = ["기업명", "업종", "당기매출", "전기매출", "증가율", "극단값"]
+    display["operating_margin"] = shown["operating_margin"].map(
+        lambda v: f"{v * 100:,.1f}%" if pd.notna(v) and v not in (float("inf"), float("-inf")) else "-"
+    )
+    display["margin_improved"] = shown["margin_improved"].map({True: "✅", False: "", pd.NA: ""}).fillna("")
+    display.columns = [
+        "기업명", "업종", "당기매출", "전기매출", "증가율", "극단값",
+        "연속성장(년)", "영업이익률", "이익률개선",
+    ]
     st.dataframe(display, width="stretch", hide_index=True)
 
 
@@ -266,7 +297,8 @@ def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: 
             st.rerun()
     else:
         for r in news.itertuples():
-            st.write(f"- {r.pub_date} [{r.window}] [{r.title}]({r.link})")
+            tag = " ⭐관련" if r.relevant else ""
+            st.write(f"- {r.pub_date} [{r.window}] [{r.title}]({r.link}){tag}")
 
 
 def main():
