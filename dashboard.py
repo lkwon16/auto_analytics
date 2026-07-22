@@ -16,10 +16,11 @@ from config import DB_URL
 from peer_group import get_peer_group
 from match_signals import get_candidate_signals
 from collect_news import collect_news_for_company
-from growth_screener import compute_revenue_growth, REVENUE_SCALE_BANDS
+from growth_screener import compute_revenue_growth
 from turnaround_screener import compute_turnaround
 from leverage_screener import compute_debt_ratio_change
 from cash_quality_screener import compute_cash_quality
+from screening_common import fetch_listed_corps, with_section
 
 PBLNTF_TY_LABELS = {"B": "주요사항보고", "F": "외부감사관련", "I": "거래소공시"}
 
@@ -187,135 +188,9 @@ def load_growth(_engine) -> pd.DataFrame:
     return compute_revenue_growth(_engine)
 
 
-def render_growth_screener(engine):
-    """매출 성장 스크리너 (신규 비즈니스 라인, growth_screener.py 참고).
-    감사 모집단(analysis_universe) 제한 없이 상장사 전체를 대상으로 한다."""
-    st.caption("감사 모집단 제한 없이 상장사 전체를 대상으로 매출 성장 기업을 찾습니다. "
-               "같은 DB를 재사용하는 별도 스크리닝 기능입니다(growth_screener.py).")
-
-    df_all = load_growth(engine)
-    if df_all.empty:
-        st.info("매출 데이터가 없습니다.")
-        return
-
-    years = sorted(df_all["bsns_year"].unique(), reverse=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        year = st.selectbox("기준 연도", years)
-    with col2:
-        section_options = ["전체"] + sorted(
-            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
-        )
-        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options)
-
-    col3, col4 = st.columns(2)
-    with col3:
-        min_growth = st.slider("최소 매출 증가율(%)", -50, 500, 20, step=5)
-    with col4:
-        show_extreme = st.checkbox(
-            "극단값(전기매출 왜소화 의심) 포함", value=False,
-            help="전기 매출이 0에 가까운 초기 기업은 증가율이 비현실적으로(1000%대) 폭발할 수 있습니다.",
-        )
-
-    col5, col6 = st.columns(2)
-    with col5:
-        band_options = ["전체"] + [label for label, _, _ in REVENUE_SCALE_BANDS]
-        band_choice = st.selectbox("매출 규모", band_options)
-    with col6:
-        min_streak = st.slider(
-            "최소 연속 성장 개년수", 0, 5, 0,
-            help="당해년도까지 매출 증가율이 몇 개년 연속 양수(+)였는지.",
-        )
-
-    margin_improved_only = st.checkbox("영업이익률 전년대비 개선 기업만", value=False)
-
-    shown = df_all[df_all["bsns_year"] == year].copy()
-    if section_choice != "전체":
-        shown = shown[shown["section_name"] == section_choice]
-    if not show_extreme:
-        shown = shown[~shown["is_extreme"]]
-    shown = shown[shown["growth"] >= min_growth / 100]
-    if band_choice != "전체":
-        _, lo, hi = next(b for b in REVENUE_SCALE_BANDS if b[0] == band_choice)
-        shown = shown[(shown["revenue"] >= lo) & (shown["revenue"] < hi)]
-    if min_streak > 0:
-        shown = shown[shown["consecutive_growth_years"] >= min_streak]
-    if margin_improved_only:
-        shown = shown[shown["margin_improved"] == True]  # noqa: E712 (NA와 구분 위해 == True 유지)
-    shown = shown.sort_values("growth", ascending=False)
-
-    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 매출 규모: {band_choice}, "
-             f"증가율 {min_growth}% 이상{'' if show_extreme else ' (극단값 제외)'}"
-             f"{f', 연속 성장 {min_streak}년 이상' if min_streak > 0 else ''}"
-             f"{', 영업이익률 개선' if margin_improved_only else ''}")
-
-    if shown.empty:
-        st.info("조건에 맞는 기업이 없습니다. 조건을 완화해 보세요.")
-        return
-
-    display = shown[[
-        "corp_name", "section_name", "revenue", "prev_revenue", "growth", "is_extreme",
-        "consecutive_growth_years", "operating_margin", "margin_improved",
-    ]].copy()
-    display["revenue"] = display["revenue"].map(lambda v: f"{v:,.0f}")
-    display["prev_revenue"] = display["prev_revenue"].map(lambda v: f"{v:,.0f}")
-    display["growth"] = (shown["growth"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
-    display["is_extreme"] = display["is_extreme"].map({True: "⚠️", False: ""})
-    display["operating_margin"] = shown["operating_margin"].map(
-        lambda v: f"{v * 100:,.1f}%" if pd.notna(v) and v not in (float("inf"), float("-inf")) else "-"
-    )
-    display["margin_improved"] = shown["margin_improved"].map({True: "✅", False: "", pd.NA: ""}).fillna("")
-    display.columns = [
-        "기업명", "업종", "당기매출", "전기매출", "증가율", "극단값",
-        "연속성장(년)", "영업이익률", "이익률개선",
-    ]
-    st.dataframe(display, width="stretch", hide_index=True)
-
-
 @st.cache_data
 def load_turnaround(_engine) -> pd.DataFrame:
     return compute_turnaround(_engine)
-
-
-def render_turnaround_screener(engine):
-    """흑자전환 스크리너 (스크리닝 도구⑧ 조건 2, turnaround_screener.py 참고)."""
-    st.caption("전기 영업손실 → 당기 영업이익으로 전환한 기업(\"턴어라운드주\")을 찾습니다. "
-               "감사 모집단 제한 없이 상장사 전체를 대상으로 합니다(turnaround_screener.py).")
-
-    df_all = load_turnaround(engine)
-    if df_all.empty:
-        st.info("데이터가 없습니다.")
-        return
-
-    years = sorted(df_all["bsns_year"].unique(), reverse=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        year = st.selectbox("기준 연도", years, key="turnaround_year")
-    with col2:
-        section_options = ["전체"] + sorted(
-            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
-        )
-        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="turnaround_section")
-
-    shown = df_all[(df_all["bsns_year"] == year) & df_all["is_turnaround"]].copy()
-    if section_choice != "전체":
-        shown = shown[shown["section_name"] == section_choice]
-    shown = shown.sort_values("operating_income", ascending=False)
-
-    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 흑자전환")
-
-    if shown.empty:
-        st.info("조건에 맞는 기업이 없습니다.")
-        return
-
-    display = shown[["corp_name", "section_name", "operating_income", "prev_operating_income", "operating_margin"]].copy()
-    display["operating_income"] = display["operating_income"].map(lambda v: f"{v:,.0f}")
-    display["prev_operating_income"] = display["prev_operating_income"].map(lambda v: f"{v:,.0f}")
-    display["operating_margin"] = shown["operating_margin"].map(
-        lambda v: f"{v * 100:,.1f}%" if pd.notna(v) and v not in (float("inf"), float("-inf")) else "-"
-    )
-    display.columns = ["기업명", "업종", "당기영업이익", "전기영업이익", "영업이익률"]
-    st.dataframe(display, width="stretch", hide_index=True)
 
 
 @st.cache_data
@@ -323,72 +198,44 @@ def load_leverage(_engine) -> pd.DataFrame:
     return compute_debt_ratio_change(_engine)
 
 
-def render_leverage_screener(engine):
-    """부채비율 급변 스크리너 (스크리닝 도구⑧ 조건 3, leverage_screener.py 참고)."""
-    st.caption("전년대비 부채비율이 뚜렷하게 개선/악화된 기업을 찾습니다. "
-               "감사 모집단 제한 없이 상장사 전체를 대상으로 합니다(leverage_screener.py).")
-
-    df_all = load_leverage(engine)
-    if df_all.empty:
-        st.info("데이터가 없습니다.")
-        return
-
-    years = sorted(df_all["bsns_year"].unique(), reverse=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        year = st.selectbox("기준 연도", years, key="leverage_year")
-    with col2:
-        section_options = ["전체"] + sorted(
-            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
-        )
-        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="leverage_section")
-
-    col3, col4 = st.columns(2)
-    with col3:
-        direction = st.radio("방향", ["개선(감소)", "악화(증가)"], horizontal=True, key="leverage_direction")
-    with col4:
-        show_extreme = st.checkbox(
-            "극단값(자본잠식·자기자본 왜소화 의심) 포함", value=False, key="leverage_extreme",
-            help="자기자본이 0에 가깝거나 음수(자본잠식)이면 부채비율이 비현실적으로 폭발할 수 있습니다.",
-        )
-
-    shown = df_all[df_all["bsns_year"] == year].copy()
-    if section_choice != "전체":
-        shown = shown[shown["section_name"] == section_choice]
-    if not show_extreme:
-        shown = shown[~shown["is_extreme"]]
-    if direction == "개선(감소)":
-        shown = shown[shown["debt_ratio_change_pp"] < 0].sort_values("debt_ratio_change_pp")
-    else:
-        shown = shown[shown["debt_ratio_change_pp"] > 0].sort_values("debt_ratio_change_pp", ascending=False)
-
-    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 부채비율 {direction}"
-             f"{'' if show_extreme else ' (극단값 제외)'}")
-
-    if shown.empty:
-        st.info("조건에 맞는 기업이 없습니다.")
-        return
-
-    display = shown[["corp_name", "section_name", "prev_debt_ratio", "debt_ratio", "debt_ratio_change_pp", "is_extreme"]].copy()
-    display["prev_debt_ratio"] = (shown["prev_debt_ratio"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
-    display["debt_ratio"] = (shown["debt_ratio"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
-    display["debt_ratio_change_pp"] = shown["debt_ratio_change_pp"].round(1).map(lambda v: f"{v:+,.1f}%p")
-    display["is_extreme"] = display["is_extreme"].map({True: "⚠️", False: ""})
-    display.columns = ["기업명", "업종", "전기부채비율", "당기부채비율", "변화", "극단값"]
-    st.dataframe(display, width="stretch", hide_index=True)
-
-
 @st.cache_data
 def load_cash_quality(_engine) -> pd.DataFrame:
     return compute_cash_quality(_engine)
 
 
-def render_cash_quality_screener(engine):
-    """이익의 질(현금창출력) 스크리너 (스크리닝 도구⑧ 조건 4, cash_quality_screener.py 참고)."""
-    st.caption("영업활동현금흐름이 영업이익을 웃도는 기업(\"이익의 질\"이 좋은 기업)을 찾습니다. "
-               "감사 모집단 제한 없이 상장사 전체를 대상으로 합니다(cash_quality_screener.py).")
+@st.cache_data
+def load_unified_screening(_engine) -> pd.DataFrame:
+    """4개 스크리닝 조건(성장·흑자전환·부채비율·이익의 질)을 corp_code+bsns_year
+    기준으로 outer join해 하나의 표로 합친다. 조건별 원천 데이터 커버리지가 달라
+    (예: 매출은 있어도 부채/자본 계정이 없는 기업) 값이 없는 조건은 NaN으로 남고,
+    그 조건을 활성화하면 자연히 걸러진다(조건 미충족과 동일하게 취급)."""
+    g = load_growth(_engine)[[
+        "corp_code", "bsns_year", "revenue", "growth", "is_extreme",
+        "consecutive_growth_years", "margin_improved",
+    ]].rename(columns={"is_extreme": "growth_extreme"})
+    t = load_turnaround(_engine)[["corp_code", "bsns_year", "operating_income", "prev_operating_income", "is_turnaround"]]
+    lev = load_leverage(_engine)[[
+        "corp_code", "bsns_year", "debt_ratio", "prev_debt_ratio", "debt_ratio_change_pp", "is_extreme",
+    ]].rename(columns={"is_extreme": "debt_extreme"})
+    cq = load_cash_quality(_engine)[["corp_code", "bsns_year", "cfo_oi_ratio", "is_good_quality"]]
 
-    df_all = load_cash_quality(engine)
+    merged = g.merge(t, on=["corp_code", "bsns_year"], how="outer") \
+              .merge(lev, on=["corp_code", "bsns_year"], how="outer") \
+              .merge(cq, on=["corp_code", "bsns_year"], how="outer")
+
+    corps = with_section(fetch_listed_corps(_engine))
+    merged = merged.merge(corps, on="corp_code", how="left")
+    return merged
+
+
+def render_unified_screener(engine):
+    """통합 기업 스크리닝 (스크리닝 도구⑧). 4개 조건(매출 성장·흑자전환·부채비율
+    급변·이익의 질)을 체크박스로 켜고 끄면서 AND 조건으로 동시에 조회한다 —
+    조건별 탭을 따로 두지 않고 하나의 검색 바에서 조합하는 구조."""
+    st.caption("감사 모집단 제한 없이 상장사 전체를 대상으로 합니다. 아래 조건 중 "
+               "하나 이상을 켜면 그 조건들을 모두 만족하는 기업만 표시됩니다(AND).")
+
+    df_all = load_unified_screening(engine)
     if df_all.empty:
         st.info("데이터가 없습니다.")
         return
@@ -396,29 +243,91 @@ def render_cash_quality_screener(engine):
     years = sorted(df_all["bsns_year"].unique(), reverse=True)
     col1, col2 = st.columns(2)
     with col1:
-        year = st.selectbox("기준 연도", years, key="cashq_year")
+        year = st.selectbox("기준 연도", years, key="unified_year")
     with col2:
         section_options = ["전체"] + sorted(
             df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
         )
-        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="cashq_section")
+        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="unified_section")
 
-    shown = df_all[(df_all["bsns_year"] == year) & df_all["is_good_quality"]].copy()
+    shown = df_all[df_all["bsns_year"] == year].copy()
     if section_choice != "전체":
         shown = shown[shown["section_name"] == section_choice]
-    shown = shown.sort_values("cfo_oi_ratio", ascending=False)
 
-    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 영업CF > 영업이익")
+    active_labels = []
+    show_cols = ["corp_name", "section_name"]
 
-    if shown.empty:
-        st.info("조건에 맞는 기업이 없습니다.")
+    st.markdown("**조건 선택**")
+    c1, c2 = st.columns(2)
+    with c1:
+        use_growth = st.checkbox("매출 성장", key="use_growth")
+        if use_growth:
+            min_growth = st.slider("최소 매출 증가율(%)", -50, 500, 20, step=5, key="unified_min_growth")
+            growth_extreme_ok = st.checkbox("극단값 포함", value=False, key="unified_growth_extreme")
+            shown = shown[shown["growth"].notna() & (shown["growth"] >= min_growth / 100)]
+            if not growth_extreme_ok:
+                shown = shown[shown["growth_extreme"] != True]  # noqa: E712
+            active_labels.append(f"매출증가율 {min_growth}%↑")
+            show_cols += ["growth", "consecutive_growth_years"]
+
+        use_turnaround = st.checkbox("흑자전환 (전기적자→당기흑자)", key="use_turnaround")
+        if use_turnaround:
+            shown = shown[shown["is_turnaround"] == True]  # noqa: E712
+            active_labels.append("흑자전환")
+            show_cols += ["operating_income", "prev_operating_income"]
+
+    with c2:
+        use_leverage = st.checkbox("부채비율 개선/악화", key="use_leverage")
+        if use_leverage:
+            direction = st.radio("방향", ["개선(감소)", "악화(증가)"], horizontal=True, key="unified_leverage_dir")
+            leverage_extreme_ok = st.checkbox("극단값(자본잠식 등) 포함", value=False, key="unified_leverage_extreme")
+            if direction == "개선(감소)":
+                shown = shown[shown["debt_ratio_change_pp"].notna() & (shown["debt_ratio_change_pp"] < 0)]
+            else:
+                shown = shown[shown["debt_ratio_change_pp"].notna() & (shown["debt_ratio_change_pp"] > 0)]
+            if not leverage_extreme_ok:
+                shown = shown[shown["debt_extreme"] != True]  # noqa: E712
+            active_labels.append(f"부채비율 {direction}")
+            show_cols += ["debt_ratio", "debt_ratio_change_pp"]
+
+        use_cash_quality = st.checkbox("이익의 질 우수 (영업CF > 영업이익)", key="use_cash_quality")
+        if use_cash_quality:
+            shown = shown[shown["is_good_quality"] == True]  # noqa: E712
+            active_labels.append("이익의 질 우수")
+            show_cols += ["cfo_oi_ratio"]
+
+    if not active_labels:
+        st.info("조건을 하나 이상 선택하세요.")
         return
 
-    display = shown[["corp_name", "section_name", "operating_income", "operating_cf", "cfo_oi_ratio"]].copy()
-    display["operating_income"] = display["operating_income"].map(lambda v: f"{v:,.0f}")
-    display["operating_cf"] = display["operating_cf"].map(lambda v: f"{v:,.0f}")
-    display["cfo_oi_ratio"] = shown["cfo_oi_ratio"].map(lambda v: f"{v:,.1f}배" if pd.notna(v) else "-")
-    display.columns = ["기업명", "업종", "영업이익", "영업활동현금흐름", "배율(CF/이익)"]
+    shown = shown.drop_duplicates(subset=["corp_code"])
+    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 조건: {' + '.join(active_labels)}")
+
+    if shown.empty:
+        st.info("조건에 맞는 기업이 없습니다. 조건을 완화해 보세요.")
+        return
+
+    display = shown[show_cols].copy()
+    col_labels = {"corp_name": "기업명", "section_name": "업종"}
+    if "growth" in show_cols:
+        display["growth"] = (shown["growth"] * 100).round(1).map(lambda v: f"{v:,.1f}%" if pd.notna(v) else "-")
+        display["consecutive_growth_years"] = shown["consecutive_growth_years"]
+        col_labels |= {"growth": "매출증가율", "consecutive_growth_years": "연속성장(년)"}
+    if "operating_income" in show_cols:
+        display["operating_income"] = shown["operating_income"].map(lambda v: f"{v:,.0f}" if pd.notna(v) else "-")
+        display["prev_operating_income"] = shown["prev_operating_income"].map(lambda v: f"{v:,.0f}" if pd.notna(v) else "-")
+        col_labels |= {"operating_income": "당기영업이익", "prev_operating_income": "전기영업이익"}
+    if "debt_ratio" in show_cols:
+        display["debt_ratio"] = (shown["debt_ratio"] * 100).round(1).map(lambda v: f"{v:,.1f}%" if pd.notna(v) else "-")
+        display["debt_ratio_change_pp"] = shown["debt_ratio_change_pp"].round(1).map(
+            lambda v: f"{v:+,.1f}%p" if pd.notna(v) else "-"
+        )
+        col_labels |= {"debt_ratio": "부채비율", "debt_ratio_change_pp": "부채비율변화"}
+    if "cfo_oi_ratio" in show_cols:
+        display["cfo_oi_ratio"] = shown["cfo_oi_ratio"].map(lambda v: f"{v:,.1f}배" if pd.notna(v) else "-")
+        col_labels |= {"cfo_oi_ratio": "CF/이익배율"}
+
+    display = display.rename(columns=col_labels)
     st.dataframe(display, width="stretch", hide_index=True)
 
 
@@ -462,22 +371,13 @@ def main():
     engine = get_engine()
     universe = load_universe(engine)
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "기업 조회", "플래그 목록", "성장 기업 스크리닝",
-        "흑자전환 스크리닝", "부채비율 급변 스크리닝", "이익의 질 스크리닝",
-    ])
+    tab1, tab2, tab3 = st.tabs(["기업 조회", "플래그 목록", "기업 스크리닝"])
     with tab1:
         render_company_view(engine, universe)
     with tab2:
         render_flag_list(engine, universe)
     with tab3:
-        render_growth_screener(engine)
-    with tab4:
-        render_turnaround_screener(engine)
-    with tab5:
-        render_leverage_screener(engine)
-    with tab6:
-        render_cash_quality_screener(engine)
+        render_unified_screener(engine)
 
 
 if __name__ == "__main__":
