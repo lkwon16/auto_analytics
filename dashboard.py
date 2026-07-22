@@ -17,6 +17,9 @@ from peer_group import get_peer_group
 from match_signals import get_candidate_signals
 from collect_news import collect_news_for_company
 from growth_screener import compute_revenue_growth, REVENUE_SCALE_BANDS
+from turnaround_screener import compute_turnaround
+from leverage_screener import compute_debt_ratio_change
+from cash_quality_screener import compute_cash_quality
 
 PBLNTF_TY_LABELS = {"B": "주요사항보고", "F": "외부감사관련", "I": "거래소공시"}
 
@@ -269,6 +272,156 @@ def render_growth_screener(engine):
     st.dataframe(display, width="stretch", hide_index=True)
 
 
+@st.cache_data
+def load_turnaround(_engine) -> pd.DataFrame:
+    return compute_turnaround(_engine)
+
+
+def render_turnaround_screener(engine):
+    """흑자전환 스크리너 (스크리닝 도구⑧ 조건 2, turnaround_screener.py 참고)."""
+    st.caption("전기 영업손실 → 당기 영업이익으로 전환한 기업(\"턴어라운드주\")을 찾습니다. "
+               "감사 모집단 제한 없이 상장사 전체를 대상으로 합니다(turnaround_screener.py).")
+
+    df_all = load_turnaround(engine)
+    if df_all.empty:
+        st.info("데이터가 없습니다.")
+        return
+
+    years = sorted(df_all["bsns_year"].unique(), reverse=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        year = st.selectbox("기준 연도", years, key="turnaround_year")
+    with col2:
+        section_options = ["전체"] + sorted(
+            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
+        )
+        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="turnaround_section")
+
+    shown = df_all[(df_all["bsns_year"] == year) & df_all["is_turnaround"]].copy()
+    if section_choice != "전체":
+        shown = shown[shown["section_name"] == section_choice]
+    shown = shown.sort_values("operating_income", ascending=False)
+
+    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 흑자전환")
+
+    if shown.empty:
+        st.info("조건에 맞는 기업이 없습니다.")
+        return
+
+    display = shown[["corp_name", "section_name", "operating_income", "prev_operating_income", "operating_margin"]].copy()
+    display["operating_income"] = display["operating_income"].map(lambda v: f"{v:,.0f}")
+    display["prev_operating_income"] = display["prev_operating_income"].map(lambda v: f"{v:,.0f}")
+    display["operating_margin"] = shown["operating_margin"].map(
+        lambda v: f"{v * 100:,.1f}%" if pd.notna(v) and v not in (float("inf"), float("-inf")) else "-"
+    )
+    display.columns = ["기업명", "업종", "당기영업이익", "전기영업이익", "영업이익률"]
+    st.dataframe(display, width="stretch", hide_index=True)
+
+
+@st.cache_data
+def load_leverage(_engine) -> pd.DataFrame:
+    return compute_debt_ratio_change(_engine)
+
+
+def render_leverage_screener(engine):
+    """부채비율 급변 스크리너 (스크리닝 도구⑧ 조건 3, leverage_screener.py 참고)."""
+    st.caption("전년대비 부채비율이 뚜렷하게 개선/악화된 기업을 찾습니다. "
+               "감사 모집단 제한 없이 상장사 전체를 대상으로 합니다(leverage_screener.py).")
+
+    df_all = load_leverage(engine)
+    if df_all.empty:
+        st.info("데이터가 없습니다.")
+        return
+
+    years = sorted(df_all["bsns_year"].unique(), reverse=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        year = st.selectbox("기준 연도", years, key="leverage_year")
+    with col2:
+        section_options = ["전체"] + sorted(
+            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
+        )
+        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="leverage_section")
+
+    col3, col4 = st.columns(2)
+    with col3:
+        direction = st.radio("방향", ["개선(감소)", "악화(증가)"], horizontal=True, key="leverage_direction")
+    with col4:
+        show_extreme = st.checkbox(
+            "극단값(자본잠식·자기자본 왜소화 의심) 포함", value=False, key="leverage_extreme",
+            help="자기자본이 0에 가깝거나 음수(자본잠식)이면 부채비율이 비현실적으로 폭발할 수 있습니다.",
+        )
+
+    shown = df_all[df_all["bsns_year"] == year].copy()
+    if section_choice != "전체":
+        shown = shown[shown["section_name"] == section_choice]
+    if not show_extreme:
+        shown = shown[~shown["is_extreme"]]
+    if direction == "개선(감소)":
+        shown = shown[shown["debt_ratio_change_pp"] < 0].sort_values("debt_ratio_change_pp")
+    else:
+        shown = shown[shown["debt_ratio_change_pp"] > 0].sort_values("debt_ratio_change_pp", ascending=False)
+
+    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 부채비율 {direction}"
+             f"{'' if show_extreme else ' (극단값 제외)'}")
+
+    if shown.empty:
+        st.info("조건에 맞는 기업이 없습니다.")
+        return
+
+    display = shown[["corp_name", "section_name", "prev_debt_ratio", "debt_ratio", "debt_ratio_change_pp", "is_extreme"]].copy()
+    display["prev_debt_ratio"] = (shown["prev_debt_ratio"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
+    display["debt_ratio"] = (shown["debt_ratio"] * 100).round(1).map(lambda v: f"{v:,.1f}%")
+    display["debt_ratio_change_pp"] = shown["debt_ratio_change_pp"].round(1).map(lambda v: f"{v:+,.1f}%p")
+    display["is_extreme"] = display["is_extreme"].map({True: "⚠️", False: ""})
+    display.columns = ["기업명", "업종", "전기부채비율", "당기부채비율", "변화", "극단값"]
+    st.dataframe(display, width="stretch", hide_index=True)
+
+
+@st.cache_data
+def load_cash_quality(_engine) -> pd.DataFrame:
+    return compute_cash_quality(_engine)
+
+
+def render_cash_quality_screener(engine):
+    """이익의 질(현금창출력) 스크리너 (스크리닝 도구⑧ 조건 4, cash_quality_screener.py 참고)."""
+    st.caption("영업활동현금흐름이 영업이익을 웃도는 기업(\"이익의 질\"이 좋은 기업)을 찾습니다. "
+               "감사 모집단 제한 없이 상장사 전체를 대상으로 합니다(cash_quality_screener.py).")
+
+    df_all = load_cash_quality(engine)
+    if df_all.empty:
+        st.info("데이터가 없습니다.")
+        return
+
+    years = sorted(df_all["bsns_year"].unique(), reverse=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        year = st.selectbox("기준 연도", years, key="cashq_year")
+    with col2:
+        section_options = ["전체"] + sorted(
+            df_all.loc[df_all["section_name"].notna(), "section_name"].unique().tolist()
+        )
+        section_choice = st.selectbox("업종 (KSIC 대분류)", section_options, key="cashq_section")
+
+    shown = df_all[(df_all["bsns_year"] == year) & df_all["is_good_quality"]].copy()
+    if section_choice != "전체":
+        shown = shown[shown["section_name"] == section_choice]
+    shown = shown.sort_values("cfo_oi_ratio", ascending=False)
+
+    st.write(f"**{len(shown):,}개 기업** — {year}년, 업종: {section_choice}, 영업CF > 영업이익")
+
+    if shown.empty:
+        st.info("조건에 맞는 기업이 없습니다.")
+        return
+
+    display = shown[["corp_name", "section_name", "operating_income", "operating_cf", "cfo_oi_ratio"]].copy()
+    display["operating_income"] = display["operating_income"].map(lambda v: f"{v:,.0f}")
+    display["operating_cf"] = display["operating_cf"].map(lambda v: f"{v:,.0f}")
+    display["cfo_oi_ratio"] = shown["cfo_oi_ratio"].map(lambda v: f"{v:,.1f}배" if pd.notna(v) else "-")
+    display.columns = ["기업명", "업종", "영업이익", "영업활동현금흐름", "배율(CF/이익)"]
+    st.dataframe(display, width="stretch", hide_index=True)
+
+
 def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: int, top_ratios: list[str]):
     """모듈⑤ — 편차 원인 후보(수시공시·뉴스)를 회계연도 윈도우 기준으로 보여준다.
     시점 매칭 설계는 match_signals.py 상단 주석(LIMITATIONS.md §8) 참고."""
@@ -309,13 +462,22 @@ def main():
     engine = get_engine()
     universe = load_universe(engine)
 
-    tab1, tab2, tab3 = st.tabs(["기업 조회", "플래그 목록", "성장 기업 스크리닝"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "기업 조회", "플래그 목록", "성장 기업 스크리닝",
+        "흑자전환 스크리닝", "부채비율 급변 스크리닝", "이익의 질 스크리닝",
+    ])
     with tab1:
         render_company_view(engine, universe)
     with tab2:
         render_flag_list(engine, universe)
     with tab3:
         render_growth_screener(engine)
+    with tab4:
+        render_turnaround_screener(engine)
+    with tab5:
+        render_leverage_screener(engine)
+    with tab6:
+        render_cash_quality_screener(engine)
 
 
 if __name__ == "__main__":

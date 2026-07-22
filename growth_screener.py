@@ -28,30 +28,16 @@ detect_flags.py(§9, SANITY_BOUNDS)처럼 계산에서 제외하지 않고 is_ex
 import sys
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
 from config import DB_URL
 from xbrl_mapping import ACCOUNT_CANDIDATES
-from peer_group import get_division, get_section
+from screening_common import fetch_account, fetch_listed_corps, with_section
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 REVENUE_CANDIDATES = ACCOUNT_CANDIDATES["revenue"]
 OPERATING_INCOME_CANDIDATES = ACCOUNT_CANDIDATES["operating_income"]
-
-# KSIC(10차) 대분류 코드 -> 한글 이름. 구간 정의(peer_group.KSIC_SECTIONS) 자체는
-# 코드에서 가져오므로 여기서는 이름만 붙인다.
-KSIC_SECTION_NAMES = {
-    "A": "농업·임업·어업", "B": "광업", "C": "제조업",
-    "D": "전기·가스·증기·공기조절 공급업", "E": "수도·하수·폐기물처리·원료재생업",
-    "F": "건설업", "G": "도매·소매업", "H": "운수·창고업", "I": "숙박·음식점업",
-    "J": "정보통신업", "K": "금융·보험업", "L": "부동산업",
-    "M": "전문·과학·기술서비스업", "N": "사업시설관리·사업지원·임대서비스업",
-    "O": "공공행정·국방·사회보장행정", "P": "교육서비스업",
-    "Q": "보건업·사회복지서비스업", "R": "예술·스포츠·여가관련서비스업",
-    "S": "협회·단체·수리·개인서비스업", "T": "가구내 고용활동·자가소비 생산활동",
-    "U": "국제·외국기관",
-}
 
 # 전년 매출 대비 분모 왜소화로 증가율이 폭발하는 경우의 판정 기준.
 # detect_flags.py의 SANITY_BOUNDS(LIMITATIONS.md §9)와 동일값(|증가율|>10=1000%)을
@@ -76,40 +62,6 @@ RESULT_COLUMNS = [
 ]
 
 
-def section_of(industry_code: str | None) -> str | None:
-    return get_section(get_division(industry_code))
-
-
-def _fetch_account(engine, candidates, value_col: str) -> pd.DataFrame:
-    """CFS 기준 계정 후보(candidates, [(sj_div, account_id), ...]) 중 fallback
-    우선순위 첫 매치만 채택해 corp_code/bsns_year별 값을 반환한다.
-    revenue·operating_income 모두 같은 추출 로직을 쓰므로 공용화했다."""
-    cand_sql = " OR ".join(
-        f"(sj_div = :sj{i} AND account_id = :ac{i})" for i in range(len(candidates))
-    )
-    params = {}
-    for i, (sj, ac) in enumerate(candidates):
-        params[f"sj{i}"] = sj
-        params[f"ac{i}"] = ac
-
-    with engine.connect() as conn:
-        raw = pd.read_sql(
-            text(
-                f"SELECT corp_code, bsns_year, sj_div, account_id, thstrm_amount "
-                f"FROM financial_statements WHERE fs_div = 'CFS' AND ({cand_sql})"
-            ),
-            conn, params=params,
-        )
-
-    if raw.empty:
-        return pd.DataFrame(columns=["corp_code", "bsns_year", value_col])
-
-    priority = {(sj, ac): i for i, (sj, ac) in enumerate(candidates)}
-    raw["_priority"] = raw.apply(lambda r: priority.get((r["sj_div"], r["account_id"]), 999), axis=1)
-    raw = raw.sort_values("_priority").drop_duplicates(subset=["corp_code", "bsns_year"], keep="first")
-    return raw[["corp_code", "bsns_year", "thstrm_amount"]].rename(columns={"thstrm_amount": value_col})
-
-
 def _consecutive_growth_streak(growth: pd.Series) -> pd.Series:
     """연도순으로 정렬된 growth 시리즈에서 당해년도까지 growth>0이 몇 개년
     연속인지 계산한다 (호출부에서 corp_code별 groupby 후 연도순 정렬해 넘길 것)."""
@@ -127,17 +79,12 @@ def compute_revenue_growth(engine=None) -> pd.DataFrame:
     감사 모집단(analysis_universe) 제한을 받지 않는다 — 이 모듈의 설계 원칙(위 docstring)."""
     engine = engine or create_engine(DB_URL)
 
-    rev_df = _fetch_account(engine, REVENUE_CANDIDATES, "revenue")
+    rev_df = fetch_account(engine, REVENUE_CANDIDATES, "revenue")
     if rev_df.empty:
         return pd.DataFrame(columns=RESULT_COLUMNS)
 
-    oi_df = _fetch_account(engine, OPERATING_INCOME_CANDIDATES, "operating_income")
-
-    with engine.connect() as conn:
-        corps = pd.read_sql(
-            text("SELECT corp_code, corp_name, industry_code FROM corp_master WHERE stock_code IS NOT NULL"),
-            conn,
-        )
+    oi_df = fetch_account(engine, OPERATING_INCOME_CANDIDATES, "operating_income")
+    corps = fetch_listed_corps(engine)
 
     records = []
     for y in sorted(rev_df["bsns_year"].unique()):
@@ -182,8 +129,7 @@ def compute_revenue_growth(engine=None) -> pd.DataFrame:
         result["margin_improved"] = pd.NA
 
     result = result.merge(corps, on="corp_code", how="left")
-    result["section"] = result["industry_code"].apply(section_of)
-    result["section_name"] = result["section"].map(KSIC_SECTION_NAMES)
+    result = with_section(result)
     return result[RESULT_COLUMNS]
 
 
