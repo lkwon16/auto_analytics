@@ -17,6 +17,7 @@ CORRECTION 섹션을 파싱해 판정, LIMITATIONS.md §5)로 재무제표·감�
 
 실행: python backtest.py
 """
+import math
 import sys
 
 import pandas as pd
@@ -39,6 +40,28 @@ CREATE TABLE IF NOT EXISTS backtest_labels (
     PRIMARY KEY (corp_code, bsns_year)
 );
 """
+
+
+def _norm_cdf(z: float) -> float:
+    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+
+
+def wald_ci(phat: float, n: int, z: float = 1.96) -> tuple:
+    """단순 Wald 신뢰구간. n이 수백 이상이면 Wilson 구간과 큰 차이 없음(여기선 898건)."""
+    if n == 0:
+        return float("nan"), float("nan")
+    margin = z * math.sqrt(phat * (1 - phat) / n)
+    return max(0.0, phat - margin), min(1.0, phat + margin)
+
+
+def one_sided_p_vs_base_rate(phat: float, base_rate: float, n: int) -> float:
+    """귀무가설: 플래그 그룹의 정정 발생률 = 전체 기준율(base_rate).
+    대립가설: 플래그 그룹이 더 높다(lift > 1). one-proportion z-test, 단측검정."""
+    if n == 0 or base_rate in (0, 1):
+        return float("nan")
+    se = math.sqrt(base_rate * (1 - base_rate) / n)
+    z = (phat - base_rate) / se
+    return 1 - _norm_cdf(z), z
 
 
 def main():
@@ -82,10 +105,19 @@ def main():
     n_restated_total = int(flags["is_restated_next_year"].sum())
     n_restated_flagged = int(flagged["is_restated_next_year"].sum())
 
+    ci_lo, ci_hi = wald_ci(precision_at_10, n_flagged)
+    lift_lo = ci_lo / base_rate if base_rate > 0 else float("nan")
+    lift_hi = ci_hi / base_rate if base_rate > 0 else float("nan")
+    p_value, z = one_sided_p_vs_base_rate(precision_at_10, base_rate, n_flagged)
+
     print(f"전체 기업x연도: {n_total:,}건 (다음해 정정 발생: {n_restated_total:,}건, 기준율 {base_rate * 100:.2f}%)")
     print(f"플래그(is_flagged=1): {n_flagged:,}건 (다음해 정정 발생: {n_restated_flagged:,}건)")
-    print(f"Precision@10%: {precision_at_10 * 100:.2f}%")
-    print(f"Lift: {lift:.2f}배 (무작위 대비)")
+    print(f"Precision@10%: {precision_at_10 * 100:.2f}% (95% CI: [{ci_lo * 100:.2f}%, {ci_hi * 100:.2f}%])")
+    print(f"Lift: {lift:.2f}배 (95% CI: [{lift_lo:.2f}, {lift_hi:.2f}])")
+    print(f"기준율 대비 z = {z:.2f}, 단측 p = {p_value:.3f} "
+          f"(귀무가설: 플래그 그룹 정정 발생률 = 전체 기준율, 대립가설: 플래그 그룹이 더 높다)")
+    if p_value >= 0.05:
+        print("  -> p >= 0.05: 이 Lift는 무작위(귀무가설)와 통계적으로 구분되지 않음")
 
 
 if __name__ == "__main__":
