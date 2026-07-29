@@ -354,20 +354,27 @@ MVP에서는 모듈⑤ 전체를 제외(DART 링크 표시로 대체)해 이 문
   효과 낮다고 판단, 우선순위 낮음).
 - **수정 후 실제 오염 비율 재측정(2026-07-29)**: 위 "1,405 광의 vs 879 협의"는 5개
   후보 태그 중 **양극단 2개(`ifrs-full_TradeAndOtherCurrentReceivables` 광의,
-  `dart_ShortTermTradeReceivable` 협의)만 비교한 진단 표본**이었다 — 나머지 3개
-  협의류 태그(`ifrs-full_CurrentTradeReceivables`/`TradeReceivables`/
-  `TradeAndOtherReceivables`)의 실제 사용 규모는 그때 측정되지 않았다. 현재
-  우선순위(협의 최우선)로 `financial_statements`를 직접 재해석해 기업×연도
-  단위로 어느 태그가 실제로 채택되는지 전수 조사한 결과:
+  `dart_ShortTermTradeReceivable` 협의)만 비교한 진단 표본**이었다 — 나머지 협의
+  태그(`ifrs-full_CurrentTradeReceivables`/`TradeReceivables`)와 광의 태그
+  (`ifrs-full_TradeAndOtherReceivables` — "TradeAndOther"가 붙어 광의 계열, 아래
+  버그 참고)의 실제 사용 규모는 그때 측정되지 않았다. 태그명 기준 정확한 분류는
+  **협의(순수 매출채권) = `dart_ShortTermTradeReceivable`·`ifrs-full_CurrentTradeReceivables`·
+  `ifrs-full_TradeReceivables` 3종**, **광의(매출채권+기타채권) =
+  `ifrs-full_TradeAndOtherReceivables`·`ifrs-full_TradeAndOtherCurrentReceivables` 2종**
+  이다(이전 버전 문서에서 `TradeAndOtherReceivables`를 협의류로 잘못 분류했었음 —
+  사용자 지적으로 정정, 아래 버그 항목도 이 지적에서 발견됨). 현재 우선순위(협의
+  최우선)로 `financial_statements`를 직접 재해석해 기업×연도 단위로 어느 태그가
+  실제로 채택되는지 전수 조사한 결과:
   - 기업×연도 8,933건 중 승자 태그 분포: `ifrs-full_TradeAndOtherCurrentReceivables`
-    (광의) 5,010건(56.1%), `dart_ShortTermTradeReceivable` 3,198건(35.8%),
-    `ifrs-full_CurrentTradeReceivables` 680건(7.6%), 나머지 2개 태그 45건(0.5%).
-    즉 협의류 4개를 합쳐도 43.9%로, **여전히 광의 쪽이 다수(56.1%)** — 우선순위
-    조정 이후에도 모집단의 태그 혼합비는 개선되지 않았고(74:26 → 오히려 44:56로
-    광의 쪽이 상대다수가 됨), 무엇보다 `ifrs-full_CurrentTradeReceivables` 680건은
-    §15 원 진단에서 아예 다뤄지지 않은 태그라 "협의류끼리는 진짜 동의어인가"조차
-    검증된 적이 없다(광의-협의 간 84% 격차만 확인됐을 뿐, 협의류 4개 태그 상호간
-    금액 격차는 미검증).
+    (광의) 5,010건(56.1%), `dart_ShortTermTradeReceivable`(협의) 3,198건(35.8%),
+    `ifrs-full_CurrentTradeReceivables`(협의) 680건(7.6%), `ifrs-full_TradeReceivables`
+    (협의) 39건(0.4%), `ifrs-full_TradeAndOtherReceivables`(광의) 6건(0.07%, 아래
+    버그 발견 후 후보에서 제외됨). 협의 3종 합계 43.85% vs 광의 2종 합계 56.15% —
+    **여전히 광의 쪽이 다수** — 우선순위 조정 이후에도 모집단의 태그 혼합비는
+    개선되지 않았다(74:26 → 오히려 44:56로 광의 쪽이 상대다수가 됨). 무엇보다
+    `ifrs-full_CurrentTradeReceivables` 680건은 §15 원 진단에서 아예 다뤄지지 않은
+    태그라 "협의 3종끼리는 진짜 동의어인가"조차 검증된 적이 없다(광의-협의 간 84%
+    격차만 확인됐을 뿐, 협의 3종 상호간 금액 격차는 미검증).
   - **기업 단위 재분류**(`trade_receivables` 데이터가 있는 1,897개사 기준): 전 연도
     광의만 채택된 기업 964개(50.8%), 전 연도 협의류만 채택된 기업 713개(37.6%),
     **연도에 따라 광의↔협의를 오가는 기업 220개(11.6%)**.
@@ -385,6 +392,21 @@ MVP에서는 모듈⑤ 전체를 제외(DART 링크 표시로 대체)해 이 문
     `ratios`에 남겨, ④ 편차 탐지에서 (a) 같은 태그를 쓰는 peer끼리만 비교하거나
     (b) 태그가 다른 peer 풀에서 나온 편차는 상위 기여 비율 선정에서 감점·각주
     표시하는 것 — 아직 미구현(v2 후보).
+  - **버그 발견·수정(2026-07-29)**: `ifrs-full_TradeAndOtherReceivables`(4번 후보)를
+    같은 회사·같은 해에 `ifrs-full_TradeAndOtherCurrentReceivables`(5번, 광의·유동)와
+    함께 공시하는 4개사 사례를 대조한 결과, 4번 태그 값이 5번의 1/20~1/40 수준으로
+    작음을 확인 — "유동" 광의(5번)에 대응하는 **"비유동(장기)" 광의** 잔액으로 보인다
+    (동의어가 아니라 유동/비유동으로 갈린 별개 계정). `ACCOUNT_CANDIDATES`의 후보
+    순서상 4번이 5번보다 먼저 확인되므로, 두 태그를 동시 공시하는 회사는 올바른(큰,
+    유동) 값 대신 훨씬 작은(비유동) 값을 `trade_receivables`로 잘못 채택하고 있었다
+    — `receivables_turnover`가 분모 축소로 인위적으로 폭등하는 방향의 버그.
+    `xbrl_mapping.py`에서 `ifrs-full_TradeAndOtherReceivables`를 후보 목록에서
+    제외(재실측 결과 확신 없는 매핑이라 결측이 낫다는 원칙 적용)하고
+    `compute_ratios.py`/`detect_flags.py`/`backtest.py` 재실행. 영향 범위는
+    `analysis_universe` 8,933건 중 6건(0.07%)뿐이라 집계 결과 변화는 미미함
+    (Precision@10% 10.91%→10.80%, Lift **1.09배→1.08배**, p=0.188→0.219 — §12의
+    "무작위와 통계적으로 구분 안 됨" 결론에는 영향 없음). 규모는 작지만 순서 배치
+    실수가 실제로 계산을 틀리게 한 사례라 기록해둠.
 
 ## 16. 스크리닝 도구(⑧) — 감사 모듈과 별개 한계 (2026-07-22)
 
