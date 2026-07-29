@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, text
 
 from config import DB_URL
 from peer_group import get_peer_group
-from match_signals import get_candidate_signals
+from match_signals import get_candidate_signals, _window as signal_window
 from collect_news import collect_news_for_company
 from growth_screener import compute_revenue_growth
 from turnaround_screener import compute_turnaround
@@ -413,12 +413,27 @@ def render_candidate_signals(engine, corp_code: str, corp_name: str, bsns_year: 
             st.write(f"- {r.rcept_dt} [{r.window}/{ty_label}] {r.report_nm} ({r.categories}){tag}")
 
     if news.empty:
-        st.caption(f"뉴스 후보 없음 — 이 기업 뉴스는 아직 미수집일 수 있습니다 "
-                   "(네이버 뉴스 API는 날짜 범위 필터가 없어 오래된 기사는 누락될 수 있음, LIMITATIONS.md §14).")
-        if st.button(f"{corp_name} 뉴스 조회하기", key=f"news_{corp_code}_{bsns_year}"):
-            n = collect_news_for_company(corp_code, corp_name, engine)
-            st.success(f"신규 뉴스 {n}건 수집 완료. 다시 펼쳐서 확인하세요.")
-            st.rerun()
+        with engine.connect() as conn:
+            total_news = conn.execute(
+                text("SELECT COUNT(*) FROM news_signals WHERE corp_code = :cc"), {"cc": corp_code}
+            ).scalar()
+        if total_news:
+            c_start, c_end, p_start, p_end = signal_window(bsns_year)
+            st.caption(
+                f"이 기업 뉴스는 {total_news}건 수집돼 있지만, 이 회계연도 매칭 윈도우"
+                f"({c_start}~{p_end}) 안에 드는 기사는 없습니다. 네이버 뉴스 API는 "
+                "최신순으로만 결과를 주기 때문에(날짜 범위 지정 불가), 조회 시점이 회계연도에서 "
+                "멀어질수록(특히 회계연도가 지난 지 오래됐을수록) 이 창에 걸리는 기사를 찾기 "
+                "어려워집니다 — 다시 조회해도 최신 기사만 추가될 뿐 결과가 달라지지 않을 수 "
+                "있습니다(LIMITATIONS.md §14)."
+            )
+        else:
+            st.caption(f"뉴스 후보 없음 — 이 기업 뉴스는 아직 미수집일 수 있습니다 "
+                       "(네이버 뉴스 API는 날짜 범위 필터가 없어 오래된 기사는 누락될 수 있음, LIMITATIONS.md §14).")
+            if st.button(f"{corp_name} 뉴스 조회하기", key=f"news_{corp_code}_{bsns_year}"):
+                n = collect_news_for_company(corp_code, corp_name, engine)
+                st.success(f"신규 뉴스 {n}건 수집 완료. 다시 펼쳐서 확인하세요.")
+                st.rerun()
     else:
         for r in news.itertuples():
             tag = " ⭐관련" if r.relevant else ""
