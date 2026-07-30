@@ -294,6 +294,19 @@ confound는 실재하나 전부는 아님) **완료**. (4) 원본(정정 전) XB
 미탐 809건)은 이번 파일럿으로 검증되지 않음 — 미결정 상태로 다음 세션에 남김.
 상세는 `LIMITATIONS.md` §17 참고.
 
+## 11. `ACCOUNT_CANDIDATES` 12개 필드 전체 재감사 (2026-07-30)
+
+§15가 `trade_receivables`에서 찾은 것 같은 매핑 버그가 나머지 11개 필드에도
+있는지 사용자 요청으로 전수 재점검함(동시 공시 기업 비교, §15와 동일 방법론).
+결과: **새 버그는 없음** — 후보 밖 대체 태그로 의심됐던 2개(`operating_income`의
+`ifrs-full_ProfitLossFromOperatingActivities`, `inventory`의
+`ifrs-full_InventoriesTotal`)는 실측 결과 각각 60%·78% 차이 나는 **다른 개념**으로
+확인돼 추가하지 않는 게 맞았음(현재 결측 처리가 옳은 선택). `interest_expense`
+(`ifrs-full_FinanceCosts`)는 "이자비용"보다 넓은 개념이지만 대안 태그 자체가
+없어 코드 변경 없이 그대로 유지하기로 함(사용자 확인). `net_income`·`total_equity`가
+지배기업 귀속분이 아니라 연결실체 전체(비지배지분 포함) 기준이라는 점도 처음
+명시적으로 문서화. 상세는 `LIMITATIONS.md` §18 참고.
+
 ## 8. 문서 산출물 (노션에 정리되어 있음)
 
 - 프로젝트 기획안 v3 (모듈 ①~⑦ 상세 설계, 리스크·대응)

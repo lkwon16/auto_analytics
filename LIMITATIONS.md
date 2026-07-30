@@ -564,3 +564,57 @@ MVP에서는 모듈⑤ 전체를 제외(DART 링크 표시로 대체)해 이 문
 - §12의 "검증 불가능한 가설로 남김" 결론은 이걸로 "검증 가능함이 확인됐고, 진양성
   구간에서는 큰 손상이 없음을 실측"으로 갱신하되, look-ahead의 핵심 주장(미탐 유발)은
   위 809건 분석 전까지 여전히 미검증 상태로 유효(struck-through 아님).
+
+## 18. `ACCOUNT_CANDIDATES` 12개 필드 전체 재감사 (2026-07-30)
+
+§15가 `trade_receivables` 하나에서 실제 매핑 버그(광의/협의 태그 혼재)를 찾아낸
+뒤, 사용자가 "다른 필드에도 비슷한 문제가 있을지 생각해보자"고 요청 — §15와 동일한
+방법론(동시 공시 기업의 후보 태그 간 값 비교)을 나머지 11개 필드 전체에 적용했다.
+
+**방법**: `financial_statements`에서 각 필드의 sj_div(IS/CIS/BS/CF)별 account_id
+빈도를 전수 집계해, `ACCOUNT_CANDIDATES`에 없는 태그 중 개념상 같아 보이는(이름이
+유사한) 고빈도 태그가 있는지 찾고, 그런 태그가 있으면 동시 공시 기업 표본으로
+현재 후보 태그와 값을 비교했다(§15와 동일 절차).
+
+**발견 1 — 후보 밖 태그 2개를 실측 검증한 결과 둘 다 다른 개념으로 확인, 추가하지
+않는 게 맞았음**:
+- `operating_income`(현재: `dart_OperatingIncomeLoss`, 10,045건) vs 후보 밖
+  `ifrs-full_ProfitLossFromOperatingActivities`(197건): 동시 공시 2개사 비교 시
+  차이 중위수 **60.19%** — 다른 개념.
+- `inventory`(현재: `ifrs-full_Inventories`, 9,181건) vs 후보 밖
+  `ifrs-full_InventoriesTotal`(118건): 동시 공시 2개사 비교 시 차이 중위수
+  **77.61%** — 다른 개념.
+- 표본이 각 2개사뿐이라 통계적으로 약하지만, 방향성(60~78% 격차)은 §15의
+  매출채권 사례(84%)와 비슷한 크기라 "동의어 표기 차이"로 보기 어렵다. 두 필드
+  모두 후보에 추가하지 않기로 함 — §15와 같은 원칙("확신 없는 매핑은 결측이
+  낫다")이 여기서도 맞는 선택이었음을 재확인. `operating_margin`·`interest_coverage`
+  (operating_income 의존)와 `inventory_turnover`(inventory 의존)의 결측률
+  (각각 2.5%, 4.5%, 13.4% — `ratios` 9,038건 기준)은 매핑 버그가 아니라 해당
+  기업들이 이 개념을 표준 태그로 공시하지 않는 것으로 결론.
+- `gp_margin` 결측 7.2%도 같은 방식으로 `cogs`(`ifrs-full_CostOfSales`)를 확인한
+  결과, 후보 밖에 있는 태그들(`dart_CostOfSalesFromSaleOfGoodsProduct` 등)은
+  전부 유형별(제품/상품/용역/건설) **하위 분해 항목**이지 대체 가능한 총계 태그가
+  아니었다(합산해서 총계를 만들려면 항목 누락 위험이 있어 이번엔 시도하지 않음) —
+  이 결측도 매핑 버그가 아니라 공시 형식 차이.
+
+**발견 2 — `interest_expense`(`ifrs-full_FinanceCosts`)는 개념 자체가 "이자비용"보다
+넓다(외화환산손실·파생상품평가손실·충당부채 현재가치 할인차금 상각 등 금융 관련
+비용을 포괄 — 순수 "이자비용"만 다루는 국제회계기준 계정이 아님). 하지만 실제
+데이터 조사 결과 이보다 좁은 "순수 이자비용" 태그가 P&L(IS/CIS) 레벨에서 유의미한
+규모로 쓰이는 사례가 없었다(CF 섹션의 `InterestPaidClassifiedAsOperatingActivities`
+류는 현금 지급액 기준이라 발생주의 비용과 시점이 다를 수 있어 대체 불가). 즉
+§15의 매출채권과 달리 "더 좁은 태그가 있는데 못 고른" 게 아니라 **애초에 대안이
+존재하지 않는 구조적 한계**다. **결론(사용자 확인, 2026-07-30): 코드는 변경하지
+않고 `ifrs-full_FinanceCosts`를 그대로 유지**한다 — `interest_coverage`
+비율은 외화·파생 관련 손익 변동이 큰 회사에서 순수 이자부담보다 왜곡될 수 있다는
+점만 한계로 남겨둔다.
+
+**발견 3 — `net_income`(`ifrs-full_ProfitLoss`)·`total_equity`(`ifrs-full_Equity`)는
+"지배기업 소유주 귀속분"이 아니라 **연결실체 전체(비지배지분 포함) 기준**이다.
+`ifrs-full_ProfitLossAttributableToOwnersOfParent`(8,822건)·
+`ifrs-full_EquityAttributableToOwnersOfParent`(9,886건)라는 지배기업 귀속분
+전용 태그가 별도로 존재하지만 의도적으로 쓰지 않는다 — `total_assets`·
+`total_liabilities`도 전부 연결실체 전체 스코프라, 네 필드 모두 같은 스코프로
+통일해야 `debt_ratio`·`total_accruals_ratio` 등 비율의 분자·분모가 정합적이다.
+버그는 아니지만 재무분석 경험이 있는 독자가 "지배기업 귀속 순이익"을 기대하고
+오해할 수 있는 지점이라 이번에 처음 명시적으로 문서화함.
